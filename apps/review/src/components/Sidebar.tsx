@@ -3,6 +3,7 @@
 import { ReviewNavLink } from "@/components/ReviewNavLink";
 import { usePathname } from "next/navigation";
 import { ChromePanelToggle } from "@/components/ChromePanelToggle";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { useReviewProject } from "@/components/ReviewProjectContext";
 import { useReviewChromeLayout } from "@/lib/review-chrome-layout";
 import { clientSearchParams, useClientSearchQuery } from "@/lib/use-client-search-query";
@@ -37,7 +38,7 @@ const NAV_ITEMS = [
   },
 ];
 
-export function Sidebar() {
+export function Sidebar({ mobileDrawerOpen = false }: { mobileDrawerOpen?: boolean }) {
   const pathname = usePathname();
   const searchParams = clientSearchParams(useClientSearchQuery());
   const embeddedInAdmin = searchParams.get("embed") === "admin";
@@ -46,15 +47,24 @@ export function Sidebar() {
     useReviewProject();
 
   return (
-    <aside className="sidebar">
+    <aside
+      id="review-sidebar-nav"
+      className="sidebar"
+      role={mobileDrawerOpen ? "dialog" : undefined}
+      aria-modal={mobileDrawerOpen || undefined}
+      aria-label="Navigation"
+    >
       <div className="sidebar-brand sidebar-brand--row">
         <div>
           <h1>CAF Review</h1>
           <span>Output &amp; approval</span>
         </div>
-        {!embeddedInAdmin ? (
-          <ChromePanelToggle expanded onClick={toggleSidebar} title="Hide navigation" />
-        ) : null}
+        <div className="sidebar-brand-actions">
+          <ThemeToggle />
+          {!embeddedInAdmin ? (
+            <ChromePanelToggle expanded onClick={toggleSidebar} title="Hide navigation" />
+          ) : null}
+        </div>
       </div>
       <div className="sidebar-project-panel" aria-label="Active project">
         <div className="sidebar-project-label">Project</div>

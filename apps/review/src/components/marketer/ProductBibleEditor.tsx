@@ -647,9 +647,10 @@ function AssetRefSection({
                     />
                   ) : null}
                   <input
-                    placeholder="Label"
+                    placeholder="Feature / screen label"
                     value={ref.label}
                     onChange={(e) => onUpdateRef(ref.assetId, { label: e.target.value })}
+                    title="Shown to generation as File N [feature]: this label"
                   />
                 </div>
                 <button type="button" className="btn btn-ghost btn-sm" onClick={() => onRemove(ref.assetId)}>

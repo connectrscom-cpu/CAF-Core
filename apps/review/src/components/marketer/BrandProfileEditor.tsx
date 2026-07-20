@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { BrandAssetsPanel } from "@/components/BrandAssetsPanel";
 import { BrandProfileHeygenSection } from "@/components/marketer/BrandProfileHeygenSection";
+import { LoadingWithTip, PageTip } from "@/components/marketer/PageTip";
 import type { BrandProfile } from "@/lib/marketer/types";
 
 interface BrandProfileEditorProps {
@@ -219,7 +220,7 @@ export function BrandProfileEditor({ slug }: BrandProfileEditorProps) {
     });
   }
 
-  if (loading) return <p className="workspace-muted">Loading brand profile…</p>;
+  if (loading) return <LoadingWithTip page="profile" label="Loading brand profile…" />;
   if (error && !edit) return <p className="workspace-error">{error}</p>;
   if (!edit || !profile) return null;
 
@@ -227,6 +228,7 @@ export function BrandProfileEditor({ slug }: BrandProfileEditorProps) {
 
   return (
     <div className="profile-editor">
+      <PageTip page="profile" salt="banner" className="page-tip-banner" />
       <div className="profile-editor-top">
         <button type="button" className="btn-ghost" onClick={() => setAdvancedOpen(true)}>
           Advanced settings

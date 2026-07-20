@@ -20,8 +20,28 @@ export async function registerReviewProxyRoutes(
       return reply.code(404).send({ ok: false, error: "not_found" });
     }
     return reply.from(request.raw.url ?? request.url, {
-      rewriteRequestHeaders: (_req, headers) => {
+      rewriteRequestHeaders: (req, headers) => {
         const h = { ...headers };
+        const incomingHost =
+          (typeof req.headers["x-forwarded-host"] === "string" && req.headers["x-forwarded-host"]) ||
+          (typeof req.headers.host === "string" && req.headers.host) ||
+          "";
+        const incomingProto =
+          (typeof req.headers["x-forwarded-proto"] === "string" && req.headers["x-forwarded-proto"]) ||
+          (config.NODE_ENV === "production" ? "https" : "http");
+        // Keep public host for Review middleware redirects (login, etc.).
+        if (incomingHost && !incomingHost.includes("127.0.0.1")) {
+          h["x-forwarded-host"] = incomingHost.split(",")[0]!.trim();
+          h["x-forwarded-proto"] = incomingProto.split(",")[0]!.trim();
+        } else if (config.CAF_PUBLIC_URL) {
+          try {
+            const u = new URL(config.CAF_PUBLIC_URL);
+            h["x-forwarded-host"] = u.host;
+            h["x-forwarded-proto"] = u.protocol.replace(":", "") || "https";
+          } catch {
+            /* ignore bad CAF_PUBLIC_URL */
+          }
+        }
         h.host = `127.0.0.1:${config.CAF_REVIEW_PORT}`;
         // Multipart uploads through reply-from fail when Expect: 100-continue is forwarded.
         delete h.expect;

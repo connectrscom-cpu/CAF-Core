@@ -550,6 +550,7 @@ export async function generateForJob(
 
   const compiledLearningRaw = await getLearningContextForGeneration(db, job.project_id, job.flow_type, job.platform, {
     include_pending_generation_guidance: isEditorialRework,
+    task_id: job.task_id,
   });
   const compiledLearning = {
     ...compiledLearningRaw,
@@ -1527,6 +1528,7 @@ export async function generateForJob(
       applied_rule_ids: compiledLearning.applied_rule_ids,
       global_context_chars: compiledLearning.global_context.length,
       project_context_chars: compiledLearning.project_context.length,
+      control_rule_ids: compiledLearning.control_rule_ids,
     }).catch(() => {});
 
     return {

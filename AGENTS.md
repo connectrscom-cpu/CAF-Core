@@ -12,7 +12,8 @@ This file helps **Cursor agents** (and humans) work safely and efficiently in **
 
 | Resource | Why |
 |----------|-----|
-| `docs/CAF_CURRENT_STATE_CONTEXT_PACK.md` | **Repo-derived current state** — start here when context may be stale (BVS, new visual, Why Mimic) |
+| `docs/CAF_CURRENT_STATE_CONTEXT_PACK.md` | **Repo-derived current state** — start here when context may be stale |
+| `docs/FABLE_IMPROVEMENT_BRIEFING.md` | **Expensive-model planning** — attach list + ranked roadmap format (do not dump all of `src/`) |
 | `docs/EXTERNAL_CONTEXT_PACK.md` | **Tiered doc bundle** for ChatGPT / other repos / rebuilds |
 | `docs/DOMAIN_MODEL.md` | **ID conventions**, `task_id` joins, lifecycle states (external copy) |
 | `.cursor/rules/caf-domain-model.mdc` | Same domain rules (Cursor always-on) |
@@ -56,6 +57,13 @@ This file helps **Cursor agents** (and humans) work safely and efficiently in **
 | New visual carousel (`FLOW_VISUAL_FIRST_CAROUSEL`) | `src/services/new-visual-carousel-prep.ts`, `new-visual-carousel-execution.ts`, `new-visual-carousel-flux-prompts.ts` |
 | Why Mimic carousel (`FLOW_WHY_MIMIC_CAROUSEL`) | `src/domain/why-mimic-carousel-flow-types.ts`, `why-mimic-execution.ts`, SIL on `mimic_v1` |
 | Brand Visual System (BVS) | `src/domain/brand-bible.ts`, `bvs-v1.ts`, `bvs-render-plan.ts`, `src/services/bvs-render-overlays.ts`, `src/repositories/brand-bibles.ts` |
+| Content routes (lanes ↔ flows ↔ quotas) | `src/domain/content-routes.ts`, `src/services/content-routes-apply.ts`, Review `ContentRoutesEditor.tsx` |
+| Text content flows (LI / Reddit / IG thread) | `src/domain/text-content-flow-types.ts`, `decision_engine/format-routing.ts` |
+| UGC video (`FLOW_VID_UGC`) | `src/domain/ugc-video.ts`, `heygen-renderer.ts`, migration `082` |
+| LinkedIn research / targeting | `src/services/linkedin-discovery.ts`, `linkedin-targeting-compile.ts`, `src/domain/linkedin-targeting-profile.ts` |
+| Research brief platforms | `src/domain/research-brief-platform.ts`, `src/services/research-brief-platform-packs.ts` |
+| Subject relevance / content guards | `src/domain/pre-llm-subject-relevance.ts`, `content-subject-guards.ts` |
+| Project setup / onboarding packs | `src/services/onboarding-pack-import.ts`, `docs/PROJECT_SETUP_CHECKLIST.md` |
 | Mimic text overlay / DocAI / reprint | `src/domain/mimic-docai-layer-positions.ts`, `mimic-post-render-layout-loop.ts`, Review `reprint-text-overlay` |
 | Human review & rework | `src/routes/v1.ts`, `src/services/rework-orchestrator.ts` |
 | Publications | `src/routes/publications.ts` |
@@ -89,7 +97,11 @@ Review app: `cd apps/review && npm run dev` (needs **`CAF_CORE_URL`**).
 | `docs/CAF_PRODUCT_PITCH.md` | Leadership / investors / evaluators |
 | `docs/CAF_COMPLETE_PRODUCT_GUIDE.md` | **Complete product guide** — what CAF is and does |
 | `docs/CAF_CURRENT_STATE_CONTEXT_PACK.md` | **Current repo truth** — operational map; PDF volumes in `docs/export/pdf/11–14` |
+| `docs/FABLE_IMPROVEMENT_BRIEFING.md` | **Fable / expensive models** — what to attach + ranked improvement format |
 | `docs/EXTERNAL_CONTEXT_PACK.md` | **ChatGPT / external repos** — what to upload, system prompt |
+| `docs/CONTENT_ROUTES.md` | Marketer lanes ↔ flows ↔ idea buckets |
+| `docs/PROJECT_SETUP_CHECKLIST.md` | Brand onboarding pack contract |
+| `docs/CAF_DOGFOOD_NOTES.md` | Operator friction log (feed planning models) |
 | `docs/REBUILD_FROM_DOCS.md` | Engineers bootstrapping from scratch |
 | `docs/DATABASE_SCHEMA.md` | Postgres table catalog |
 | `docs/DOMAIN_MODEL.md` | Entities, IDs, lifecycles |

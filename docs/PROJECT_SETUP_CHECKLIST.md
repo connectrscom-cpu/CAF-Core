@@ -1,29 +1,37 @@
-# CAF Project Setup Checklist
+# Project Setup Checklist
 
-**Purpose:** one fillable document per brand. Download it → paste it into ChatGPT (or any AI) that already has your brand knowledge → get back the **same document filled in** → upload that filled markdown when creating the brand in CAF Review (`/workspace` → **New brand**).
+**Purpose:** one fillable document per brand that covers **all CAF operator Project settings tabs** plus Brand Visual System *text* and Product Bible *text*. Paste into the brand’s AI project → get a filled pack → upload in Review (`/workspace` → **New brand**) and/or paste into settings.
 
-This file is **not** for Brand Visual System image files or Product Bible screenshots. Those have separate checklists:
+| CAF UI tab | Pack section |
+|------------|--------------|
+| Strategy | §2 |
+| Brand | §3 |
+| Product (video flows) | §7 |
+| Product Bible (Brand profile) | §8 |
+| Platforms | §9 |
+| System limits | §10 |
+| Flow types | §11 |
+| Video defaults | §12 |
+| HeyGen (advanced) | §13 |
+| Prompts | §14 |
+| Content routes (Brand profile) | §6 |
+| Visual / BVS text | §4 |
+| Research lists | §5 |
 
-| Document | What it covers |
-|----------|----------------|
-| **This file** | Identity, strategy, voice, **content routes**, platforms, research lists, visual *text* rules, publishing |
-| [BRAND_BIBLE_ASSET_CHECKLIST.md](./BRAND_BIBLE_ASSET_CHECKLIST.md) | Which visual assets to create, sizes, formats, and how to generate them |
-| [PRODUCT_BIBLE_ASSET_CHECKLIST.md](./PRODUCT_BIBLE_ASSET_CHECKLIST.md) | Product screenshots / UI assets (only if product routes are enabled) |
+**Images are separate:** [BRAND_BIBLE_ASSET_CHECKLIST.md](./BRAND_BIBLE_ASSET_CHECKLIST.md), [PRODUCT_BIBLE_ASSET_CHECKLIST.md](./PRODUCT_BIBLE_ASSET_CHECKLIST.md).
+
+**Defaults:** For System limits, Flow types, HeyGen advanced, and Prompts — prefer **`[REC] use CAF defaults`** unless the brand has an explicit policy. Do not invent avatar IDs, prompt templates, or raw HeyGen config rows.
 
 ---
 
 ## How to use (human)
 
-1. Download this checklist (Review → **New brand** → download, or copy from this repo).
-2. Open your brand’s ChatGPT / Claude / Gemini **project** (the one that already holds strategy, voice, competitors, captions, etc.).
-3. Paste **everything below the line** titled “Paste from here”.
-4. Ask: *Fill every field from this project’s knowledge. Do not interview me. Mark missing facts as `[GAP]`.*
-5. Copy the model’s filled **CAF Project Onboarding Pack** (sections 1–9).
-6. In CAF Review → **Workspace** → **New brand** → paste or upload that filled markdown.
+1. Open the **brand’s** ChatGPT / Claude / Gemini project (not an engineering repo).
+2. Paste **everything below** “Paste from here”.
+3. Say: *Fill this for the brand in this project. Do not interview me. Tag `[FACT]` / `[REC]` / `[GAP]`. Output only the Required output.*
+4. Upload the pack in Review → New brand (import maps strategy, brand, product, routes, research, platforms, limits where possible). Paste remaining advanced fields into Project settings if needed.
 
-Mark answers clearly. Use `N/A` when a section does not apply. Use `[GAP]` when the project knowledge is silent or contradictory.
-
-**Target readiness:** MVP = voice + strategy + 1–2 content routes + research sources. Production = BVS assets uploaded + product bible if needed + publishing credentials.
+This template is **brand-agnostic**.
 
 ---
 
@@ -33,256 +41,257 @@ Copy from this heading through the end of the file into your AI project.
 
 ---
 
-# CAF Setup — fill this pack from project knowledge
+# Brand onboarding pack — fill from this project’s knowledge
 
-You are filling a **CAF Project Onboarding Pack** for the brand in this project.
+You are filling a **structured brand onboarding pack** for the **brand belonging to this chat/project**.
 
-**CAF** (Content Automation Framework) runs: Research → Planning → Generation → QC → Rendering → Review → Publishing.
+This is a **blank template**. It is not written for any specific brand.
 
-CAF needs **explicit, structured inputs**. Vague adjectives produce off-brand output.
+## Ground rules
 
-## Your task
-
-1. Search **all** project knowledge (briefs, strategy, social guidelines, competitors, visual notes, captions, handles, product info, compliance).
-2. Fill **every field** below with brand-specific values.
-3. Where information is missing, write **`[GAP — not in project knowledge]`** and one short human question (do not run a long interview).
-4. Where sources conflict, note the conflict, recommend one value, and say why.
-5. Respond with **only** the filled pack under **Required output** — same section headers and field labels — so the human can upload it to CAF unchanged.
-
-**Quality bar:** concrete and copy-pasteable (real handles, hex codes, lists, example captions) — not adjectives alone.
-
-**Do not** invent handles, hex codes, or competitors. **Do** prefer specifics (“warm terracotta `#C4714A`”). **Do** label examples clearly when you write faithful stand-ins.
-
-**Assets:** do **not** invent image files here. For visual/product files, list status (Have / Need) only; the human will use the Brand Bible / Product Bible asset checklists separately.
+1. Use **only** knowledge in this project.
+2. Fill every field. Prefer short, concrete wording.
+3. Tag values: **`[FACT]`** / **`[REC]`** / **`[GAP]`** (one short question per gap; no long interview).
+4. **Do not refuse** incomplete knowledge. Partial packs with honest `[GAP]`s are expected.
+5. **Do not invent** handles, hex colors, metrics, avatar/voice IDs, or prompt bodies.
+6. For operator numerics / HeyGen / prompts with no brand policy: write **`[REC] use CAF defaults`**.
+7. Respond with **only** the Required output — same section titles and field labels (labels match CAF Project settings).
 
 ---
 
-## Information to extract (use as a worksheet; output must follow Required output)
+## Worksheet (maps to CAF Project settings)
 
-### Brand identity
+### §1 Brand snapshot
 
-| Field | Value |
-|-------|--------|
-| Display name (as shown in Review) | |
-| Project slug (uppercase letters/numbers, e.g. `CUISINA`) | |
-| One-line description / core offer | |
-| Brand accent color (`#RRGGBB`) | |
-| Primary Instagram handle | |
-| Other handles (TikTok, Facebook, LinkedIn, etc.) | |
-| Website / product URL | |
-| Product or app name (if any) | |
+| Field | Guidance |
+|-------|----------|
+| Display name | |
+| Project slug | Uppercase; or `[GAP]` |
+| Description / core offer | |
+| Accent color | `#RRGGBB` or `[GAP]` |
+| Instagram handle | One handle only; optional `@` — or `[GAP]` |
+| TikTok handle | One handle only — or `N/A` / `[GAP]` |
+| Facebook handle / page | One page or handle — or `N/A` / `[GAP]` |
+| LinkedIn handle / page | One company or personal — or `N/A` / `[GAP]` |
+| Reddit username | One account — or `N/A` / `[GAP]` |
+| X / Twitter handle | One handle — or `N/A` / `[GAP]` |
+| YouTube handle | One channel — or `N/A` / `[GAP]` |
+| Website | |
+| Product/app name | Or `N/A` |
 
-### Strategy & objectives
+### §2 Strategy (Project settings → Strategy)
 
-| Field | Value |
-|-------|--------|
-| Target audience (who, life stage, skill, geography) | |
-| Audience type | B2C / B2B / Prosumer |
-| Audience problem | |
+| CAF field | Guidance |
+|-----------|----------|
+| Project type | e.g. B2C brand / SaaS / content brand |
+| Core offer | |
+| Target audience | |
 | Transformation promise | |
 | Positioning statement | |
-| Differentiation vs competitors | |
-| Strategic content pillars (3–5) | |
-| Primary content goal | Awareness / Engagement / Leads / Conversions / Education / Community |
 | Primary business goal | |
-| North-star metric (if any) | |
-| Publishing intensity (posts/week per platform) | |
-| Content approval owner | |
-| Funnel stage focus / traffic destination (optional) | |
+| Primary content goal | Awareness / Engagement / Leads / Conversions / Education / Community |
+| Brand archetype | Or `[GAP]` / `[REC]` |
+| Content pillars | 3–5 |
+| Differentiation angle | |
+| Instagram handle | Same as brand snapshot Instagram (carousel CTA); optional `@` |
+| Audience problem | |
+| Publishing intensity | Or `[GAP]` |
+| North-star metric | Or `[GAP]` |
+| Approval owner | Or `[GAP]` |
+| Traffic destination | Optional |
+| Niche vs product ratio | e.g. 80/20 — or `[REC]` |
 
-### Voice & compliance
+### §3 Brand (Project settings → Brand) + compliance extras
 
-| Field | Value |
-|-------|--------|
-| Tone / voice (2–3 example phrases) | |
-| Audience reading level | |
-| Storytelling style | |
-| CTA style | |
-| Emoji policy (allowed? max per caption?) | |
-| Banned words (semicolon-separated) — QC enforced | |
-| Banned claims | |
+| CAF field | Guidance |
+|-----------|----------|
+| Tone | |
+| Voice style | |
+| Audience level | Reading level |
+| Emoji policy | |
+| Banned claims | Prompt guidance |
+| Banned words | QC enforced; semicolon-separated |
 | Mandatory disclaimers | |
-| Humor / emotional intensity | |
-| 3–5 example captions (real or faithful; label examples) | |
-| Regulated category (food, health, etc.) | |
-| Sensitive topics to avoid | |
-| Sponsor / affiliate disclosure rules | |
+| CTA style rules | |
+| Storytelling style | |
+| Example captions | 3–5 (extra; store in notes if needed) |
+| Regulated category | Extra |
+| Sensitive topics | Extra |
+| Sponsor / affiliate disclosure | Extra |
 
-### Content routes (choose at setup — only enabled lanes generate ideas and jobs)
+### §4 Visual system (text only)
 
-Answer **Yes** or **No** for each lane. Prefer a small MVP set (often niche + brand visual carousels). Advanced lanes can stay No until ready.
+Palette, motifs, mode, application rules, asset Have/Need status — not image files.
 
-#### Carousels
+### §5 Research watchlists
 
-| Lane | Enable? (Yes/No) | Brand-specific notes |
-|------|------------------|----------------------|
-| Niche carousels | | tip / education slides (not hard product pitches) |
-| Product carousels | | feature, benefit, comparison, offer |
-| Brand visual carousels | | on-brand designs from Brand Visual System |
-| Recreate top performers | | remake competitor winners in brand look |
-| Why Mimic carousels | | advanced; usually No at start |
+Handles, URLs, hashtags, subreddits — one per line. Competitors, inspiration, excludes, top performers. `[GAP]` freely.
 
-#### Video
+### §6 Content routes
 
-| Lane | Enable? (Yes/No) | Brand-specific notes |
-|------|------------------|----------------------|
-| Avatar video (script) | | talking-head + editable script |
-| Avatar video (prompt) | | short creative brief |
-| Video without avatar | | voiceover / graphics |
-| Hook-first video | | cinematic hook, then avatar |
-| UGC creator video | | peer-style talking-head |
-| Product marketing videos | | problem / feature / comparison / use case / proof / offer |
+Yes / No / Later per lane (carousels, video, text). Small MVP preferred. Enables flows behind the scenes.
 
-#### Text
+### §7 Product (video flows) — Project settings → Product
 
-| Lane | Enable? (Yes/No) | Brand-specific notes |
-|------|------------------|----------------------|
-| LinkedIn posts | | |
-| Reddit posts | | |
-| Instagram threads | | |
+Skip with `N/A` if product lanes are No. **Exact CAF labels:**
 
-**Priorities** (one sentence): e.g. “Start niche + brand visual carousels only; add avatar video in month 2.”
+Product name; Product category; Product URL; One-liner; Value proposition; Elevator pitch; Primary audience; Audience pain points; Audience desires; Top use cases / scenarios; Key features; Key benefits; Differentiators; Proof points; Social proof; Competitors; Comparison angles; Pricing summary; Current offer; Urgency; Guarantee; Primary CTA; Secondary CTA; Always say / preferred phrasing; Never say / forbidden phrasing.
 
-If any **product** lane is Yes, note product bible readiness (products, features, screenshot Have/Need) — assets themselves follow [PRODUCT_BIBLE_ASSET_CHECKLIST.md](./PRODUCT_BIBLE_ASSET_CHECKLIST.md).
+### §8 Product Bible (Brand profile)
 
-If any **visual carousel / mimic** lane is Yes, note BVS text readiness below; image files follow [BRAND_BIBLE_ASSET_CHECKLIST.md](./BRAND_BIBLE_ASSET_CHECKLIST.md).
+Instructions; HeyGen / video policy; Flux / image policy; Product UGC hosts (`label \| avatar_id \| voice_id` or `[GAP]`); modules (key, label, one-liner, description, features, assets status).
 
-### Platforms (research & publishing soft defaults)
+### §9 Platforms (Project settings → Platforms)
 
-| Platform | Research? | Publish? | Notes |
-|----------|-----------|----------|-------|
-| Instagram | | | |
-| TikTok | | | |
-| Facebook | | | |
-| LinkedIn | | | |
-| Reddit | | | |
-| Web / blogs | | — | |
+Primary row for **Instagram** (add TikTok/others if in scope):
 
-**Instagram rules** (if Instagram is in scope):
+| CAF field | Guidance |
+|-----------|----------|
+| Platform | e.g. Instagram |
+| Caption Max Chars | Or `[REC] use CAF defaults` |
+| Hook Must Fit First Lines | true/false or `[REC]` |
+| Hook Max Chars | Or `[REC]` |
+| Slide Min Chars / Slide Max Chars | Or `[REC]` |
+| Min Slides / Max Slides | Or `[REC]` |
+| Carousel headline/body/kicker/cta/handle size (px) | Or `[REC]` |
+| Carousel font scale | 0.75–1.25 or `[REC]` |
+| Max Hashtags | Or `[REC]` |
+| Hashtag Format Rule | Or `[REC]` |
+| Line Break Policy | Or `[REC]` |
+| Formatting rules | Free text |
 
-| Rule | Value |
-|------|-------|
-| Caption max chars | |
-| Hook max chars / first lines | |
-| Carousel slide min–max | |
-| Max hashtags + format | |
-| Links in caption? | |
-| Line-break policy | |
+Also: which platforms for research vs publish.
 
-### Research watchlists
+### §10 System limits (Project settings → System limits)
 
-Paste one entry per line in the output (handles, URLs, hashtags, subreddits).
+Prefer **`[REC] use CAF defaults`** unless the brand sets caps.
 
-Also provide: named competitors (3–5) + why; inspiration accounts; topics to exclude; top-performing post URLs for mimic; formats that historically work.
+| CAF field |
+|-----------|
+| Max daily jobs |
+| Min score to generate |
+| Max active prompt versions |
+| Default variation cap |
+| Auto-validation pass threshold |
+| Max carousel jobs (per run plan) |
+| Max video/reel jobs (per run plan) |
+| Per-flow caps (JSON) |
 
-### Visual system (text only — not image files)
+### §11 Flow types (Project settings → Flow types)
 
-| Field | Value |
-|-------|--------|
-| Visual mode | Illustrated cartoon / Photography / Minimal editorial / Mixed / Custom |
-| Visual style description | |
-| Palette (hex + role per color) | |
-| Allowed motifs | |
-| Forbidden motifs | |
-| Domain metaphors | |
-| Application instructions (how CAF applies the look) | |
-| Content aims | |
-| Mimic policy (when reinterpreting top performers) | |
-| Original / new-visual policy (mandatory brand elements) | |
-| Asset inventory status | Style refs / backgrounds / elements / logos / mascots / frames — Have, Need, or Partial (files generated via Brand Bible asset checklist) |
+Content routes (§6) turn lanes on. Only fill overrides here:
 
-### Product summary (text — only if product routes are Yes)
+| CAF field | Guidance |
+|-----------|----------|
+| Enabled flow notes | Which FLOW_* matter; or `[REC] follow content routes` |
+| Allowed platforms | Comma-separated if non-default |
+| Priority weight notes | Or `[REC]` |
+| HeyGen mode (FLOW_PRODUCT_* only) | blank / script_led / prompt_led — or `[REC] code default` |
 
-| Field | Value |
-|-------|--------|
-| Products to document (key + label) | |
-| One-liner per product | |
-| Features to highlight | |
-| Screenshot / UI assets ready? | Yes / Partial / No |
+### §12 Video defaults (Project settings → Video defaults)
 
-### Video / HeyGen (only if any video route is Yes)
-
-| Field | Value |
-|-------|--------|
-| Preferred presenters (IDs / labels) | |
-| Preferred voices (IDs / labels) | |
+| CAF field | Guidance |
+|-----------|----------|
+| Default HeyGen voice_id | Paste ID or `[GAP]` / `[REC] set in Review` |
+| Default HeyGen avatar_id | Or `[GAP]` if using pool |
+| Avatar pool JSON | Or one avatar_id per line for helper — or `[GAP]` |
 | Script tone notes | |
-| When to use script-led vs prompt-led | |
+| Script-led vs prompt-led | When to use which |
 
-### Publishing
+### §13 HeyGen (advanced)
 
-| Field | Value |
-|-------|--------|
-| Platforms to publish on | |
-| Primary link-in-bio URL | |
-| Default hashtag sets | |
-| Preferred posting times / timezone | |
-| Meta / IG business account ready? | Yes / No / Later |
-| Integrations / credentials owner | |
+Do **not** invent `config_id` / `config_key` rows. Write:
+
+- **`[REC] leave CAF HeyGen advanced config unchanged`**, or
+- Short notes for an operator (e.g. “prefer 9:16 Instagram”)
+
+### §14 Prompts
+
+Do **not** invent full prompt templates. Write:
+
+- **`[REC] use CAF default project prompts`**, or
+- Short notes of what to customize later in Project settings → Prompts
+
+### §15 Publishing
+
+Channels; link-in-bio; hashtag sets; posting schedule / timezone; business account ready; credentials owner.
 
 ---
 
 ## Required output
 
-Respond with **only** this document (no preamble). Keep these exact section titles and field labels so CAF can import the file.
+Respond with **only** this document (no preamble). Keep these exact section titles and field labels.
 
 ```markdown
-# CAF Project Onboarding Pack — {BRAND_DISPLAY_NAME}
+# Brand Onboarding Pack — {BRAND_DISPLAY_NAME}
 
-> Compiled from project knowledge on {YYYY-MM-DD}.
-> Readiness: {MVP | Production-ready | Not ready}
+> Compiled from this project’s knowledge on {YYYY-MM-DD}.
+> Readiness: {Draft | MVP | Production-ready | Not ready}
+> Legend: [FACT] = in knowledge · [REC] = recommendation · [GAP] = human must answer
 
 ## 1. Brand snapshot
-- Display name:
-- Slug:
-- Description:
-- Accent color:
-- Instagram:
-- Other handles:
-- Website:
-- Product/app name:
+- Display name: …
+- Slug: …
+- Description: …
+- Accent color: …
+- Instagram handle: …
+- TikTok handle: …
+- Facebook handle / page: …
+- LinkedIn handle / page: …
+- Reddit username: …
+- X / Twitter handle: …
+- YouTube handle: …
+- Website: …
+- Product/app name: …
 
 ## 2. Strategy
-- Audience:
-- Audience type:
-- Problem:
-- Promise:
-- Positioning:
-- Differentiation:
-- Content pillars:
-- Content goal:
-- Business goal:
-- Publishing intensity:
-- North-star metric:
-- Approval owner:
-- Traffic destination:
+- Project type: …
+- Core offer: …
+- Target audience: …
+- Audience problem: …
+- Transformation promise: …
+- Positioning statement: …
+- Primary business goal: …
+- Primary content goal: …
+- Brand archetype: …
+- Content pillars: …
+- Differentiation angle: …
+- Instagram handle: …
+- Publishing intensity: …
+- North-star metric: …
+- Approval owner: …
+- Traffic destination: …
+- Niche vs product ratio: …
 
-## 3. Voice & compliance
-- Tone:
-- Reading level:
-- Storytelling style:
-- CTA style:
-- Emoji policy:
-- Banned words:
-- Banned claims:
-- Disclaimers:
-- Humor / emotional intensity:
+## 3. Brand
+- Tone: …
+- Voice style: …
+- Audience level: …
+- Emoji policy: …
+- Banned claims: …
+- Banned words: …
+- Mandatory disclaimers: …
+- CTA style rules: …
+- Storytelling style: …
 - Example captions:
-  1.
-  2.
-  3.
+  1. …
+  2. …
+  3. …
+- Regulated category: …
+- Sensitive topics: …
+- Sponsor / affiliate disclosure: …
 
 ## 4. Visual system
-- Style:
-- Palette (hex + roles):
-- Domain metaphors:
-- Allowed motifs:
-- Forbidden motifs:
-- Visual mode:
-- Application instructions:
-- Content aims:
-- Mimic policy:
-- Original policy:
+- Style: …
+- Palette (hex + roles): …
+- Domain metaphors: …
+- Allowed motifs: …
+- Forbidden motifs: …
+- Visual mode: …
+- Application instructions: …
+- Content aims: …
+- Mimic policy: …
+- Original policy: …
 - Asset inventory:
   | Category | Status | Notes |
   |----------|--------|-------|
@@ -293,7 +302,7 @@ Respond with **only** this document (no preamble). Keep these exact section titl
   | Mascots | | |
   | Slide frames | | |
   | Anti-references | | |
-- Next step for assets: Use Brand Bible asset checklist (do not invent files here).
+- Next step for assets: Brand Bible asset checklist (do not invent files here).
 
 ## 5. Research watchlist
 ### Instagram accounts
@@ -315,52 +324,152 @@ Respond with **only** this document (no preamble). Keep these exact section titl
 ### Websites & blogs
 ```
 ```
-- Competitors:
-- Inspiration accounts:
-- Topics to exclude:
-- Top performers:
-- Winning formats:
+- Competitors: …
+- Inspiration accounts: …
+- Topics to exclude: …
+- Top performers: …
+- Winning formats: …
 
 ## 6. Content routes & platforms
-- Enabled content routes: (semicolon-separated lane labels that are Yes — e.g. Niche carousels; Brand visual carousels)
-- Disabled / deferred routes: (optional)
-- Route priorities:
-- Product bible needed?: Yes/No + gaps
-- Brand bible assets needed?: Yes/No + gaps
-- Instagram rules:
-- Other platform rules:
-- Research platforms:
-- Publish platforms:
+- Enabled content routes: (semicolon-separated Yes lanes)
+- Disabled / deferred routes: …
+- Route priorities: …
+- Niche vs product ratio: …
+- Brand visual assets needed?: Yes/No + gaps
+- Research platforms: …
+- Publish platforms: …
 
-## 7. Publishing
-- Channels:
-- Link-in-bio:
-- Hashtag sets:
-- Posting schedule:
-- Meta / IG business account:
-- Credentials owner:
+## 7. Product (video flows)
+> `N/A` if product carousels and product marketing videos are both No.
+- Product name: …
+- Product category: …
+- Product URL: …
+- One-liner: …
+- Value proposition: …
+- Elevator pitch: …
+- Primary audience: …
+- Audience pain points: …
+- Audience desires: …
+- Top use cases / scenarios: …
+- Key features: …
+- Key benefits: …
+- Differentiators: …
+- Proof points: …
+- Social proof: …
+- Competitors: …
+- Comparison angles: …
+- Pricing summary: …
+- Current offer: …
+- Urgency: …
+- Guarantee: …
+- Primary CTA: …
+- Secondary CTA: …
+- Always say / preferred phrasing: …
+- Never say / forbidden phrasing: …
 
-## 8. Compliance
-- Category:
-- Banned claims:
-- Sensitive topics:
-- Disclosures:
+## 8. Product Bible
+> `N/A` if product lanes are No. Do not invent screenshot files.
+- Instructions: …
+- HeyGen / video policy: …
+- Flux / image policy: …
+- Product UGC hosts: …
+### Module 1
+- Key: …
+- Label: …
+- One-liner: …
+- Description: …
+- Features:
+  | Key | Label | Description | Assets |
+  |-----|-------|-------------|--------|
+  | | | | Have / Partial / Need |
+- Module assets: Have / Partial / Need
 
-## 9. Gaps & next steps
-- Gaps:
-- Conflicts:
+## 9. Platforms
+### Instagram
+- Platform: Instagram
+- Caption Max Chars: …
+- Hook Must Fit First Lines: …
+- Hook Max Chars: …
+- Slide Min Chars: …
+- Slide Max Chars: …
+- Min Slides: …
+- Max Slides: …
+- Carousel headline size (px): …
+- Carousel body size (px): …
+- Carousel kicker size (px): …
+- Carousel CTA size (px): …
+- Carousel handle size (px): …
+- Carousel font scale: …
+- Max Hashtags: …
+- Hashtag Format Rule: …
+- Line Break Policy: …
+- Formatting rules: …
+### Other platforms (optional)
+- (repeat Platform + notes, or `N/A`)
+
+## 10. System limits
+- Max daily jobs: …
+- Min score to generate: …
+- Max active prompt versions: …
+- Default variation cap: …
+- Auto-validation pass threshold: …
+- Max carousel jobs (per run plan): …
+- Max video/reel jobs (per run plan): …
+- Per-flow caps (JSON): …
+
+## 11. Flow types
+- Enabled flow notes: …
+- Allowed platforms: …
+- Priority weight notes: …
+- HeyGen mode (FLOW_PRODUCT_*): …
+
+## 12. Video defaults
+- Default HeyGen voice_id: …
+- Default HeyGen avatar_id: …
+- Avatar pool JSON: …
+- Pool helper (one avatar_id per line): …
+- Script tone notes: …
+- Script-led vs prompt-led: …
+
+## 13. HeyGen (advanced)
+- Notes: …
+
+## 14. Prompts
+- Notes: …
+
+## 15. Publishing
+- Channels: …
+- Link-in-bio: …
+- Hashtag sets: …
+- Posting schedule: …
+- Business account: …
+- Credentials owner: …
+
+## 16. Known facts vs recommendations vs gaps
+### Facts used
+- …
+
+### Recommendations for human review
+- …
+
+### Gaps (human only)
+- …
+
+## 17. Next steps
 - Must finish before first on-brand carousel:
 - Must decide before first video:
+- Must finish before product routes in production:
+- Operator tabs still needing Review paste (if any):
 - Priority actions:
 ```
 
 ---
 
-## After upload into CAF
+## Quality bar (self-check before sending)
 
-1. Create brand in Review with the filled pack (content routes in §6 are applied at import when recognized).
-2. Generate/upload visual assets using [BRAND_BIBLE_ASSET_CHECKLIST.md](./BRAND_BIBLE_ASSET_CHECKLIST.md) → Brand Visual System.
-3. If product routes are on, use [PRODUCT_BIBLE_ASSET_CHECKLIST.md](./PRODUCT_BIBLE_ASSET_CHECKLIST.md) → Product Bible.
-4. Research → Build research brief → Ideas → cart → generate → review → publish.
-
-Lane catalog (engineering): [CONTENT_ROUTES.md](./CONTENT_ROUTES.md).
+- [ ] No brand assumed unless it is **this** project’s brand
+- [ ] Strategy / Brand / Product field labels match CAF Project settings
+- [ ] Product §7–§8 filled or explicitly `N/A`
+- [ ] Platforms §9 filled for primary publish platform (or `[REC] use CAF defaults`)
+- [ ] System limits / Flow types / HeyGen advanced / Prompts use defaults or honest `[GAP]` — no invented IDs or prompt bodies
+- [ ] Section 16 lists facts, recommendations, and gaps

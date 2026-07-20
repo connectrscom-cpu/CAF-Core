@@ -194,7 +194,7 @@ export function ProjectPromptsPanel() {
   return (
     <div className="card" style={{ padding: 18 }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
-        <div style={{ minWidth: 320, flex: "1 1 320px" }}>
+        <div className="project-prompts-col" style={{ minWidth: 320, flex: "1 1 320px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
             <div style={{ fontWeight: 700 }}>Project prompts &amp; versions (creation layer)</div>
           </div>
@@ -231,7 +231,7 @@ export function ProjectPromptsPanel() {
           </div>
         </div>
 
-        <div style={{ minWidth: 340, flex: "1 1 340px" }}>
+        <div className="project-prompts-col" style={{ minWidth: 340, flex: "1 1 340px" }}>
           {currentTemplate ? (
             <>
               <div style={{ fontWeight: 700, marginBottom: 8 }}>
@@ -289,7 +289,7 @@ export function ProjectPromptsPanel() {
       {dlgOpen && edit && (
         <div className="card" style={{ marginTop: 16, padding: 16, border: "1px solid var(--border)" }}>
           <div style={{ fontWeight: 800, marginBottom: 10 }}>Edit prompt version</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div className="mobile-stack-grid">
             <div className="filter-group">
               <label className="filter-label">flow_type</label>
               <input className="filter-input" value={edit.flow_type} onChange={(e) => setEdit({ ...edit, flow_type: e.target.value })} />

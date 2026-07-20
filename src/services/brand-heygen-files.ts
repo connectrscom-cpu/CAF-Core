@@ -9,6 +9,7 @@ import {
 } from "../domain/brand-bible.js";
 import {
   resolveHeygenProductReferenceAssets,
+  type ProductBibleResolvedAsset,
   type ProductBibleSnapshotV1,
 } from "../domain/product-bible.js";
 import type { ProjectBrandAssetRow } from "../repositories/project-config.js";
@@ -88,13 +89,17 @@ export function brandBibleSnapshotToHeygenFiles(
   return out;
 }
 
-/** Product bible screenshots first (workflow steps in order); prefers synced HeyGen asset ids. */
+/**
+ * Product bible screenshots (workflow steps in order); prefers synced HeyGen asset ids.
+ * Pass the same `referenceAssets` used in the prompt File N map so attachment order matches labels.
+ */
 export function productBibleSnapshotToHeygenFiles(
   snapshot: ProductBibleSnapshotV1 | null | undefined,
-  projectAssets: ProjectBrandAssetRow[]
+  projectAssets: ProjectBrandAssetRow[],
+  referenceAssets?: ProductBibleResolvedAsset[]
 ): HeygenFileEntry[] {
   if (!snapshot) return [];
-  const refs = resolveHeygenProductReferenceAssets(snapshot);
+  const refs = referenceAssets ?? resolveHeygenProductReferenceAssets(snapshot);
   if (refs.length === 0) return [];
   const byId = new Map(projectAssets.map((a) => [a.id, a]));
   const out: HeygenFileEntry[] = [];

@@ -43,6 +43,8 @@ function reviewChildEnv(config: AppConfig, port: number): NodeJS.ProcessEnv {
     HOSTNAME: "127.0.0.1",
     CAF_CORE_URL: coreBase,
     CAF_CORE_TOKEN: config.CAF_CORE_API_TOKEN ?? process.env.CAF_CORE_TOKEN ?? "",
+    CAF_ACCOUNT_AUTH_ENFORCED: config.CAF_ACCOUNT_AUTH_ENFORCED ? "1" : "0",
+    CAF_ACCOUNT_SIGNUP_ENABLED: config.CAF_ACCOUNT_SIGNUP_ENABLED ? "1" : "0",
     NEXT_PUBLIC_APP_URL: publicBase,
     RENDERER_BASE_URL: config.RENDERER_BASE_URL,
     ...(agentInspectionEnabled

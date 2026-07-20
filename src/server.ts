@@ -21,6 +21,7 @@ import { registerLearningRoutes } from "./routes/learning.js";
 import { registerPublicationRoutes } from "./routes/publications.js";
 import { registerProjectIntegrationsRoutes } from "./routes/project-integrations.js";
 import { registerCreativeIntelligenceRoutes } from "./routes/creative-intelligence.js";
+import { registerAccountRoutes } from "./routes/accounts.js";
 import { registerRendererTemplateRoutes, isRendererTemplatesPublicPath } from "./routes/renderer-templates.js";
 import {
   warnIfRendererBaseUrlIsCafCore,
@@ -28,6 +29,8 @@ import {
 } from "./services/renderer-url-guard.js";
 import { ensureSupabaseAssetFolderPrefixes } from "./services/supabase-storage.js";
 import { startEditorialAnalysisCron } from "./services/editorial-analysis-cron.js";
+import { startMetaMetricsPullCron } from "./services/meta-metrics-pull.js";
+import { startLlmApprovalReviewCron } from "./services/llm-approval-review-cron.js";
 import { registerReviewProxyRoutes } from "./routes/review-proxy.js";
 import { startReviewNextServer, type ReviewServerHandle } from "./services/review-next-server.js";
 import { readinessState } from "./services/readiness-state.js";
@@ -93,6 +96,7 @@ async function main() {
   registerPublicationRoutes(app, { db, config });
   registerProjectIntegrationsRoutes(app, { db });
   registerCreativeIntelligenceRoutes(app, { db, config });
+  registerAccountRoutes(app, { db, config });
 
   if (config.CAF_REVIEW_ENABLED) {
     readinessState.reviewEnabled = true;
@@ -103,9 +107,13 @@ async function main() {
   }
 
   const stopEditorialCron = startEditorialAnalysisCron(app.log, { db, config });
+  const stopMetaMetricsPullCron = startMetaMetricsPullCron(app.log, { db, config });
+  const stopLlmReviewCron = startLlmApprovalReviewCron(app.log, { db, config });
 
   app.addHook("onClose", async () => {
     stopEditorialCron?.();
+    stopMetaMetricsPullCron?.();
+    stopLlmReviewCron?.();
     readinessState.reviewUpstream = null;
     readinessState.reviewEnabled = false;
     await reviewServer?.stop();

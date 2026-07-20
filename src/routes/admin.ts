@@ -380,15 +380,26 @@ function css(): string {
 --green:#22c55e;--green-bg:rgba(34,197,94,.12);--red:#ef4444;--red-bg:rgba(239,68,68,.12);
 --yellow:#eab308;--yellow-bg:rgba(234,179,8,.12);--blue-bg:rgba(59,130,246,.12);--purple:#a855f7;--purple-bg:rgba(168,85,247,.12);
 --teal:#2dd4bf;--teal-bg:rgba(45,212,191,.12);--orange:#fb923c;--orange-bg:rgba(251,146,60,.12);--cyan:#22d3ee;--cyan-bg:rgba(34,211,238,.1);
---sidebar:260px}
+--sidebar:260px;color-scheme:dark}
+html[data-theme=light]{--bg:#f7f7f8;--bg2:#ffffff;--fg:#18181b;--fg2:#52525b;--accent:#2563eb;--accent2:#1d4ed8;
+--card:#ffffff;--card2:#f1f1f3;--surface-2:#f1f1f4;--surface-3:#e8e8ec;--border:#e0e0e4;--border2:#ebebee;--muted:#71717a;
+--green:#16a34a;--green-bg:rgba(22,163,74,.1);--red:#dc2626;--red-bg:rgba(220,38,38,.08);
+--yellow:#a16207;--yellow-bg:rgba(202,138,4,.12);--blue-bg:rgba(37,99,235,.08);--purple:#9333ea;--purple-bg:rgba(147,51,234,.08);
+--teal:#0d9488;--teal-bg:rgba(13,148,136,.1);--orange:#ea580c;--orange-bg:rgba(234,88,12,.1);--cyan:#0891b2;--cyan-bg:rgba(8,145,178,.08);
+color-scheme:light}
+html[data-theme=light] tbody tr:nth-child(even){background:rgba(0,0,0,.02)}
+html[data-theme=light] .caf-tooltip,html[data-theme=light] .caf-options-dropdown{box-shadow:0 8px 24px rgba(0,0,0,.12)}
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html,body{background:var(--bg);color:var(--fg);min-height:100vh;
 font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;font-size:14px;line-height:1.5}
 a{color:var(--accent);text-decoration:none}a:hover{color:var(--accent2)}
 .shell{display:flex;min-height:100vh}
 .sb{width:var(--sidebar);background:var(--bg2);border-right:1px solid var(--border);position:fixed;top:0;left:0;bottom:0;z-index:50;display:flex;flex-direction:column;overflow-y:auto}
-.sb-brand{padding:20px 20px 16px;border-bottom:1px solid var(--border)}
+.sb-brand{padding:20px 20px 16px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
 .sb-brand h1{font-size:15px;font-weight:700;letter-spacing:-.02em}
+.sb-theme-toggle{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;border:none;border-radius:6px;background:transparent;color:var(--muted);cursor:pointer;flex-shrink:0}
+.sb-theme-toggle:hover{color:var(--fg);background:var(--card2);opacity:1}
+.sb-theme-toggle svg{width:15px;height:15px;display:block}
 .sb-brand span{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;display:block;margin-top:2px}
 .sb-nav{padding:12px 8px;flex:1;display:flex;flex-direction:column;gap:2px}
 .sb-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);padding:16px 12px 6px}
@@ -658,7 +669,7 @@ function sidebar(active: string, projects: ProjectRow[], currentSlug: string): s
   };
 
   return `<aside class="sb">
-  <div class="sb-brand"><h1>CAF Core</h1><span>Admin Dashboard</span></div>
+  <div class="sb-brand"><div><h1>CAF Core</h1><span>Admin Dashboard</span></div>${adminThemeToggleHtml()}</div>
   <div class="sb-project-sel">
     <label>Active project</label>
     <select id="project-sel" name="project" aria-label="Active project">${projectOptions}</select>
@@ -682,6 +693,37 @@ function sidebar(active: string, projects: ProjectRow[], currentSlug: string): s
 </aside>`;
 }
 
+/** Theme key shared with the Review app (apps/review/src/lib/theme.ts) so the embedded workbench follows the admin theme. */
+const ADMIN_THEME_STORAGE_KEY = "caf-theme";
+
+function adminThemeToggleHtml(): string {
+  return `<button type="button" class="sb-theme-toggle" data-caf-theme-toggle title="Toggle light/dark mode" aria-label="Toggle light/dark mode">
+<svg data-theme-icon="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+<svg data-theme-icon="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+</button>`;
+}
+
+/** Runs before first paint: applies the stored theme to avoid a dark→light flash. */
+function adminThemeInitScript(): string {
+  return `(function(){try{if(localStorage.getItem(${JSON.stringify(ADMIN_THEME_STORAGE_KEY)})==="light")document.documentElement.setAttribute("data-theme","light");}catch(e){}})();`;
+}
+
+/** Toggle wiring + cross-document sync (storage events cover the embedded Review iframe and other tabs). */
+function adminThemeScript(): string {
+  return `(function(){
+var KEY=${JSON.stringify(ADMIN_THEME_STORAGE_KEY)};
+function current(){return document.documentElement.getAttribute("data-theme")==="light"?"light":"dark"}
+function apply(t){if(t==="light")document.documentElement.setAttribute("data-theme","light");else document.documentElement.removeAttribute("data-theme");sync()}
+function sync(){var light=current()==="light";document.querySelectorAll("[data-caf-theme-toggle]").forEach(function(btn){
+var sun=btn.querySelector('[data-theme-icon="sun"]'),moon=btn.querySelector('[data-theme-icon="moon"]');
+if(sun)sun.style.display=light?"none":"block";if(moon)moon.style.display=light?"block":"none";});}
+document.querySelectorAll("[data-caf-theme-toggle]").forEach(function(btn){btn.addEventListener("click",function(){
+var next=current()==="light"?"dark":"light";try{localStorage.setItem(KEY,next)}catch(e){}apply(next);});});
+window.addEventListener("storage",function(e){if(e.key===KEY)apply(e.newValue==="light"?"light":"dark");});
+sync();
+})();`;
+}
+
 function page(
   title: string,
   activeSidebar: string,
@@ -693,9 +735,9 @@ function page(
 ): string {
   const mainCls = mainClass ? `main ${mainClass}` : "main";
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${title} — CAF Core</title><style>${css()}</style>${headExtra}</head>
+<title>${title} — CAF Core</title><script>${adminThemeInitScript()}</script><style>${css()}</style>${headExtra}</head>
 <body><div class="shell">${sidebar(activeSidebar, projects, currentSlug)}<main class="${mainCls}">${body}</main></div>
-<script>${adminCafUiScript()}</script></body></html>`;
+<script>${adminCafUiScript()}</script><script>${adminThemeScript()}</script></body></html>`;
 }
 
 /** Injected in &lt;head&gt;: global cafFetch() adds x-caf-core-token when CAF_CORE_REQUIRE_AUTH and token are set. */
@@ -8123,7 +8165,7 @@ async function loadConfig(){
     'FLOW_VID_SCRIPT':{label:'Video – Script',cat:'Video (generic)',defaultNotes:'Spoken script JSON for script-led HeyGen (avatar reads verbatim).'},
     'Video_Script_Generator':{label:'Video – Single (Script path)',cat:'Video (generic)',defaultNotes:'HeyGen script path (full dialogue).'},
     'FLOW_VID_PROMPT':{label:'Video – Prompt',cat:'Video (generic)',defaultNotes:'Video plan/prompt JSON for prompt-led HeyGen Video Agent.'},
-    'FLOW_VID_HOOK_FIRST':{label:'Hook-first hybrid video',cat:'Video (generic)',defaultNotes:'HeyGen AI hook clip (4–8s, no avatar) + HeyGen body (script avatar / video agent by body_lane) → concat in Core.'},
+    'FLOW_VID_HOOK_FIRST':{label:'Hook-first hybrid video',cat:'Video (generic)',defaultNotes:'HeyGen AI hook clip (4–8s, no avatar, body voice) + HeyGen avatar Video Agent body (A-roll + B-roll) → concat in Core.'},
     'FLOW_VID_UGC':{label:'UGC creator video',cat:'Video (generic)',defaultNotes:'Peer-voice spoken_script + UGC host pool (brand/product bible) → HeyGen script-led avatar.'},
     'FLOW_VID_PROMPT_NO_AVATAR':{label:'Video prompt — no avatar',cat:'Video (generic)',defaultNotes:'HeyGen Video Agent only (no on-camera avatar): narration + motion/stock/graphics; uses FLOW_VID_PROMPT templates.'},
     'Video_Prompt_Generator':{label:'Video – Single (Prompt path)',cat:'Video (generic)',defaultNotes:'HeyGen prompt path (short-form).'},

@@ -1,6 +1,6 @@
 # Product Bible Asset Checklist
 
-**Purpose:** create and upload **product evidence images** CAF uses for product carousels and product marketing videos. Separate from the [project setup checklist](./PROJECT_SETUP_CHECKLIST.md) (which records product *text*: names, one-liners, features).
+**Purpose:** create and upload **product evidence images** CAF uses for product carousels and product marketing videos. Separate from the [project setup checklist](./PROJECT_SETUP_CHECKLIST.md) §7–§8 (product *text*: profile + Product Bible modules).
 
 Complete this **only if** product content routes are enabled (product carousels and/or product marketing videos).
 
@@ -12,7 +12,7 @@ Complete this **only if** product content routes are enabled (product carousels 
 
 ## How to use
 
-1. In the project setup pack, list products (key + label), one-liners, and features.
+1. Fill [project setup](./PROJECT_SETUP_CHECKLIST.md) §7–§8 (products, keys, one-liners, features).
 2. Paste **this checklist** into ChatGPT / design tools with those product names and any real product URLs or existing screenshots.
 3. Produce the asset set below; name files clearly; upload and attach to the right product / feature in Product Bible.
 4. Prefer **real product UI** over invented mockups. If you must mock, label as `mock` in the filename and notes.
@@ -97,7 +97,7 @@ Use these roles in filenames/notes:
 
 ## Tie to Product Bible text
 
-Before upload, ensure the setup pack / Product Bible has:
+Before upload, ensure the [project setup pack](./PROJECT_SETUP_CHECKLIST.md) §7–§8 / Product Bible has:
 
 | Text field | Why |
 |------------|-----|

@@ -24,7 +24,10 @@ import {
   productBibleSnapshotToHeygenFiles,
   resolveHeygenVideoAgentBodyFiles,
 } from "./brand-heygen-files.js";
-import { buildProductBibleVideoAgentPromptBlock } from "../domain/product-bible.js";
+import {
+  buildProductBibleVideoAgentPromptBlock,
+  resolveHeygenProductReferenceAssets,
+} from "../domain/product-bible.js";
 import { resolveProductBibleForEnabledJob } from "../domain/product-bible-v1.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import { buildProductVideoAgentBrandPromptBlock } from "./product-video-agent-brand.js";
@@ -2099,13 +2102,17 @@ export async function runHeygenForContentJob(
           job.generation_payload
         );
         const snapshot = productSlice?.enabled ? productSlice.bible_snapshot : null;
-        const productBibleBlock = buildProductBibleVideoAgentPromptBlock(snapshot);
+        const productRefs = snapshot ? resolveHeygenProductReferenceAssets(snapshot) : [];
+        const existingFileCount = Array.isArray(body.files) ? body.files.length : 0;
+        const productBibleBlock = buildProductBibleVideoAgentPromptBlock(snapshot, productRefs, {
+          fileIndexOffset: existingFileCount,
+        });
         if (productBibleBlock && typeof body.prompt === "string") {
           const p = body.prompt.trim();
           body.prompt = p ? `${p}\n\n${productBibleBlock}` : productBibleBlock;
         }
         const kit = await listProjectBrandAssets(db, job.project_id);
-        const productFiles = productBibleSnapshotToHeygenFiles(snapshot, kit);
+        const productFiles = productBibleSnapshotToHeygenFiles(snapshot, kit, productRefs);
         if (productFiles.length > 0) {
           mergeHeygenVideoAgentFiles(body, productFiles);
         } else {

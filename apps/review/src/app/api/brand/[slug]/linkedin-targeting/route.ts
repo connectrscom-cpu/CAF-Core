@@ -1,3 +1,4 @@
+import { brandAccessDeniedResponse } from "@/lib/brand-access-guard";
 import { NextRequest, NextResponse } from "next/server";
 import { compileLinkedInTargeting } from "@/lib/caf-core-client";
 
@@ -8,6 +9,11 @@ type Ctx = { params: Promise<{ slug: string }> };
 
 export async function POST(req: NextRequest, ctx: Ctx) {
   const { slug } = await ctx.params;
+  {
+    const denied = await brandAccessDeniedResponse(slug);
+    if (denied) return denied;
+  }
+
   let body: { free_text?: string; persist?: boolean; apply_to_sources?: boolean };
   try {
     body = (await req.json()) as typeof body;

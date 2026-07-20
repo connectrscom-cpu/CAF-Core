@@ -254,13 +254,16 @@ export async function insertGenerationAttribution(
     applied_rule_ids: string[];
     global_context_chars: number;
     project_context_chars: number;
+    /** Rules withheld because the job fell into a holdout control group. */
+    control_rule_ids?: string[];
   }
 ): Promise<void> {
   await db.query(
     `INSERT INTO caf_core.learning_generation_attribution (
        task_id, project_id, flow_type, platform,
-       applied_rule_ids, global_context_chars, project_context_chars
-     ) VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7)`,
+       applied_rule_ids, global_context_chars, project_context_chars,
+       phase, control_rule_ids
+     ) VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,'generation',$8::jsonb)`,
     [
       row.task_id,
       row.project_id,
@@ -269,6 +272,36 @@ export async function insertGenerationAttribution(
       JSON.stringify(row.applied_rule_ids),
       row.global_context_chars,
       row.project_context_chars,
+      JSON.stringify(row.control_rule_ids ?? []),
     ]
   );
+}
+
+/**
+ * Planning-side attribution: which ranking rules boosted/penalized which
+ * candidates in `decideGenerationPlan`. Written before a task_id exists, so
+ * rows are keyed by (project_id, candidate_id, run_id); task resolution joins
+ * `content_jobs` on the same text IDs.
+ */
+export async function insertPlanningAttributionBatch(
+  db: Pool,
+  projectId: string,
+  runId: string | null,
+  entries: Array<{
+    candidate_id: string;
+    flow_type: string | null;
+    platform: string | null;
+    applied_rule_ids: string[];
+  }>
+): Promise<void> {
+  for (const e of entries) {
+    await db.query(
+      `INSERT INTO caf_core.learning_generation_attribution (
+         task_id, project_id, flow_type, platform,
+         applied_rule_ids, global_context_chars, project_context_chars,
+         phase, candidate_id, run_id
+       ) VALUES (NULL,$1,$2,$3,$4::jsonb,0,0,'planning',$5,$6)`,
+      [projectId, e.flow_type, e.platform, JSON.stringify(e.applied_rule_ids), e.candidate_id, runId]
+    );
+  }
 }

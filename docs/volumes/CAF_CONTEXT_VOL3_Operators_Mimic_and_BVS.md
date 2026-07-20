@@ -1,8 +1,10 @@
 # CAF Current State Context Pack — Operators Mimic and BVS
 
-**Volume 3 of 4** | Generated 2026-07-10 | Full pack: docs/CAF_CURRENT_STATE_CONTEXT_PACK.md
+**Volume 3 of 4** | Regenerated 2026-07-16 from `docs/CAF_CURRENT_STATE_CONTEXT_PACK.md`  
+**Planning LLMs:** `docs/FABLE_IMPROVEMENT_BRIEFING.md`
 
 ---
+
 ## 9. Review app and operator workflow
 
 ### Architecture
@@ -14,6 +16,20 @@
 ### Two audiences
 1. **Marketer:** `/workspace` → `/brand/[slug]/*` (profile, research, ideas, content, publishing, performance)
 2. **Operator:** `/review`, `/runs`, `/pipeline`, `/publish`, `/learning` (enable via `?debug=1` or operator sidebar)
+
+### Marketer funnel (2026-07 refresh)
+| Surface | Role | Notable components / APIs |
+|---------|------|---------------------------|
+| Workspace | Brand switcher, new brand from onboarding pack | `workspace/page.tsx`, `/api/workspace/brands` |
+| Brand profile | Strategy, bibles, **content routes**, HeyGen presenters | `BrandBibleEditor`, `ProductBibleEditor`, `ContentRoutesEditor` |
+| Research | Briefs, platform filter, **research pipeline** panel | `ResearchBoard`, `ResearchPipelinePanel`, `ResearchBriefPlatformFilter` |
+| Ideas | Board + cart → run jobs | `IdeasBoard`, content cart drawer/modal |
+| Content / publishing / performance | Job-oriented marketer views | brand `content` / `publishing` / `performance` pages |
+| Setup downloads | Checklists for ChatGPT fill | `apps/review/public/setup/*` ↔ `docs/PROJECT_SETUP_*` |
+
+Onboarding: `docs/PROJECT_SETUP_CHECKLIST.md`, import via Core onboarding pack services + Review new-brand flow. ChatGPT fill instructions: `apps/review/CHATGPT_PROJECT_SETUP_GUIDE.md`.
+
+LinkedIn targeting (newer): Review API `linkedin-targeting` + Core `linkedin-targeting-profile.ts` / `linkedin-targeting-compile.ts` / `linkedin-discovery.ts`.
 
 ### Queue and job detail
 - `GET /api/tasks` → Core review queue
@@ -66,7 +82,7 @@ Auto-upgrades `APPROVED` → `NEEDS_EDIT` if unsaved edits exist.
 
 ### Implemented
 1. XLSX upload → `inputs_evidence_imports` + rows
-2. Scraper config/runs (Apify) → same evidence shape
+2. Scraper config/runs (Apify) → same evidence shape (Instagram, LinkedIn, etc.)
 3. Evidence packs (multi-platform)
 4. Processing profile (criteria, models, caps)
 5. Insight tiers: `broad_llm`, `top_performer_deep`, `top_performer_video`, `top_performer_carousel`
@@ -75,6 +91,10 @@ Auto-upgrades `APPROVED` → `NEEDS_EDIT` if unsaved edits exist.
 8. Idea lists (`inputs_idea_lists`, `inputs_ideas`)
 9. Signal pack build (from import or idea list)
 10. RTP summary, QC flow profiles, API audit
+11. **LinkedIn discovery / transforms** + targeting profile compile (`linkedin-discovery.ts`, `linkedin-targeting-compile.ts`)
+12. **Pre-LLM subject relevance** ranking/guards (`pre-llm-subject-relevance.ts`, `content-subject-guards.ts`)
+13. **Research brief platform packs** (`research-brief-platform.ts`, `research-brief-platform-packs.ts`)
+14. Scraper **recover** helpers (`inputs-scraper-recover.ts`)
 
 ### Partial / TBD (from roadmap + code)
 - Structured Stage-3 idea picker at plan time (idea lists exist; full planner UX incomplete)
@@ -82,7 +102,8 @@ Auto-upgrades `APPROVED` → `NEEDS_EDIT` if unsaved edits exist.
 - Persist `decideGenerationPlan` I/O snapshot per run
 - Optional persisted candidate audit rows
 - HTML/platform summary folding
-- Review app: upload + inspect only (no processing controls)
+- Review marketer research controls growing; some processing still admin-first
+- Text/UGC publish + Review polish vs carousel/video maturity
 
 ### Signal pack → run
 `POST /v1/runs` with `signal_pack_id` → materialize `planned_jobs_json` → `startRun()` → `content_jobs` at `PLANNED`.
@@ -170,4 +191,3 @@ Templates: `carousel_mimic_bg.hbs`, `MIMIC_FULL_BLEED_RENDER_TEMPLATE`.
 - Why Mimic requires substantive SIL (`WHY_MIMIC_REQUIRE_SUBSTANTIVE_SIL`)
 
 ---
-

@@ -1,3 +1,4 @@
+import { brandAccessDeniedResponse } from "@/lib/brand-access-guard";
 import { NextRequest, NextResponse } from "next/server";
 import {
   createProject,
@@ -7,7 +8,6 @@ import {
   listProjects,
   listSignalPacksForProject,
   replaceInputsSourceTabRows,
-  runBroadInsightsForImport,
   runInputsScraper,
 } from "@/lib/caf-core-client";
 import { toResearchBrief, enrichResearchBriefFromScraperRun } from "@/lib/marketer/idea-adapters";
@@ -41,6 +41,11 @@ async function ensureBrandProject(slug: string, displayName?: string): Promise<b
 
 export async function GET(_req: NextRequest, ctx: Ctx) {
   const { slug } = await ctx.params;
+  {
+    const denied = await brandAccessDeniedResponse(slug);
+    if (denied) return denied;
+  }
+
   if (!slug) return NextResponse.json({ error: "Missing brand" }, { status: 400 });
 
   const displayName = await resolveDisplayName(slug);
@@ -137,6 +142,11 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
 
 export async function POST(req: NextRequest, ctx: Ctx) {
   const { slug } = await ctx.params;
+  {
+    const denied = await brandAccessDeniedResponse(slug);
+    if (denied) return denied;
+  }
+
   if (!slug) return NextResponse.json({ error: "Missing brand" }, { status: 400 });
 
   const displayName = await resolveDisplayName(slug);
@@ -191,30 +201,14 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       );
     }
 
-    const insights = await runBroadInsightsForImport(slug, importId, {
-      rescan: false,
-      max_rows: 500,
-    }).catch((e) => ({ ok: false as const, error: String(e) }));
-
-    if (!insights || !("ok" in insights) || !insights.ok) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "insights_failed",
-          message:
-            "Could not analyze evidence. Wait for the scraper to finish, then try again.",
-        },
-        { status: 502 }
-      );
-    }
-
     return NextResponse.json({
-      ok: true,
-      importId,
+      ok: false,
+      error: "use_pipeline",
       message:
-        "Research brief analysis finished. Open Intelligence to generate ideas, or Ideas if a brief already exists.",
-      insights,
-    });
+        "Use Research analysis → Create research brief (pipeline build_signal_pack). This shortcut only ran broad insights and is retired.",
+      importId,
+      next_action: "Open Research analysis for this import and click Create research brief.",
+    }, { status: 400 });
   }
 
   const group = RESEARCH_SOURCE_GROUPS.find((g) => g.tab === body.tab || g.id === body.tab);

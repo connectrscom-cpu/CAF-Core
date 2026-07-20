@@ -20,7 +20,7 @@ Core is **self-contained**: planning, jobs, QC, rendering, review, publishing, a
 
 ## What problem does it solve?
 
-Teams that produce **scaled social content** (carousels, reels, scripted video) need:
+Teams that produce **scaled social content** (carousels, reels, scripted / UGC video, LinkedIn/Reddit/IG text) need:
 
 1. **Structured intake** — research / signals turned into candidates with typed fields and lineage.
 2. **Controlled generation** — prompts, schemas, tenant config, caps, suppression.
@@ -61,7 +61,9 @@ For a **technical** walkthrough (files, tables, boundaries), see **[ARCHITECTURE
 | **Complete product guide (what CAF does)** | **`docs/CAF_COMPLETE_PRODUCT_GUIDE.md`** |
 | Product / ops / leadership (short) | This file |
 | **External LLM / other repository** | **`docs/CAF_CURRENT_STATE_CONTEXT_PACK.md`** + **`docs/EXTERNAL_CONTEXT_PACK.md`** |
+| **Fable / expensive improvement planning** | **`docs/FABLE_IMPROVEMENT_BRIEFING.md`** (+ current-state pack + `AGENTS.md`) |
 | **Rebuild / bootstrap** | **`docs/REBUILD_FROM_DOCS.md`** |
+| **Brand setup / content lanes** | **`docs/PROJECT_SETUP_CHECKLIST.md`**, **`docs/CONTENT_ROUTES.md`** |
 | Engineers implementing features | `docs/CAF_CORE_COMPLETE_GUIDE.md` (single file), or `docs/ARCHITECTURE.md`, `docs/layers/README.md`, `README.md`, `docs/API_REFERENCE.md` |
 | Database / schema | `docs/DATABASE_SCHEMA.md` |
 | Domain IDs & lifecycles | `docs/DOMAIN_MODEL.md` |

@@ -8,17 +8,19 @@ You are working inside **CAF Core**.
 
 ## Goal
 
-Update CAF documentation so it matches the current repo state as of the **July 2026 current-state context pack**. Do **not** refactor runtime code unless you discover a documentation generator or an obvious broken doc reference that needs a small fix. This is primarily a **documentation reconciliation** task.
+Update CAF documentation so it matches the current repo state as of the **2026-07-16 current-state context pack** (and `docs/FABLE_IMPROVEMENT_BRIEFING.md` for planning-model attach lists). Do **not** refactor runtime code unless you discover a documentation generator or an obvious broken doc reference that needs a small fix. This is primarily a **documentation reconciliation** task.
 
 ## Primary authority order
 
-1. **Live source code and migrations** win.
+1. **Live source code and migrations** win (through at least `082_flow_vid_ugc.sql`).
 2. `docs/CAF_CURRENT_STATE_CONTEXT_PACK.md` and `docs/volumes/CAF_CONTEXT_VOL*.md` are the current repo-derived operational map.
-3. `AGENTS.md` defines invariants for AI/coding agents.
-4. Older June docs are useful but may be stale.
+3. `docs/FABLE_IMPROVEMENT_BRIEFING.md` is the entry for expensive-model roadmaps.
+4. `AGENTS.md` defines invariants for AI/coding agents.
+5. Older June docs are useful but may be stale.
 
 ## Read first
 
+- `docs/FABLE_IMPROVEMENT_BRIEFING.md`
 - `docs/CAF_CURRENT_STATE_CONTEXT_PACK.md`
 - `docs/volumes/CAF_CONTEXT_VOL1_Platform_and_Funnel.md`
 - `docs/volumes/CAF_CONTEXT_VOL2_Data_Contracts_and_Flows.md`
@@ -26,6 +28,8 @@ Update CAF documentation so it matches the current repo state as of the **July 2
 - `docs/volumes/CAF_CONTEXT_VOL4_Quality_Ops_and_Agent_Map.md`
 - `AGENTS.md`
 - `docs/EXTERNAL_CONTEXT_PACK.md`
+- `docs/CONTENT_ROUTES.md`
+- `docs/PROJECT_SETUP_CHECKLIST.md`
 
 ## Then update stale docs, especially
 
@@ -47,9 +51,21 @@ Update CAF documentation so it matches the current repo state as of the **July 2
 - `docs/API_REFERENCE.md`
 - `docs/REBUILD_FROM_DOCS.md`
 - `docs/TECH_STACK.md`
+- `docs/VIDEO_FLOWS.md` — include UGC / hook-first if missing
 - `ENV_AND_SECRETS_INVENTORY.md`
 - `.env.example` — only if documented env names are stale or missing
 - `.cursor/rules/visual-first-carousel-flow.mdc` — if still describing TP replication for visual-first
+
+## Specific corrections to apply (additive July 16)
+
+Keep all prior July corrections (BVS, new visual, Why Mimic) **and** document:
+
+1. **Content routes** — `src/domain/content-routes.ts`, `docs/CONTENT_ROUTES.md`, Review `ContentRoutesEditor`, setup checklist §6.
+2. **Text flows** — `FLOW_LINKEDIN_TEXT_POST`, `FLOW_REDDIT_POST`, `FLOW_INSTAGRAM_THREAD` (+ document post), migration 081.
+3. **UGC video** — `FLOW_VID_UGC`, migration 082, `ugc-video.ts`.
+4. **Project setup packs** — `PROJECT_SETUP_CHECKLIST.md`, `apps/review/public/setup/*`, onboarding import.
+5. **LinkedIn targeting / research briefs / subject relevance** — see current-state pack §10.
+6. **Fable briefing** — keep `FABLE_IMPROVEMENT_BRIEFING.md` as the planning entry; do not tell models to ingest all of `src/`.
 
 ## Specific corrections to apply
 
@@ -73,9 +89,9 @@ State clearly:
 
 ### 2. Maturity (honest)
 
-**Production / mature:** run planning, `FLOW_CAROUSEL`, carousel editor, Review workbench, QC + risk policies, HeyGen video, inputs → signal pack, Creative Intelligence ingest, publications (Meta/n8n), learning rules.
+**Production / mature:** run planning, `FLOW_CAROUSEL`, carousel editor, Review workbench, QC + risk policies, HeyGen video, inputs → signal pack, Creative Intelligence ingest, publications (Meta/n8n), learning rules, content routes, project setup packs.
 
-**Partial / gated:** mimic carousel render (`MIMIC_IMAGE_ENABLED=false` default), mimic image, scene assembly (provider-dependent), Stage-3 idea picker, marketer funnel completeness, composite saliency text-placement automation (designed, not built), global learning rules disabled, `FLOW_IMG_*` blocked at LLM.
+**Partial / gated / newer:** mimic carousel render (`MIMIC_IMAGE_ENABLED=false` default), mimic image, scene assembly (provider-dependent), Stage-3 idea picker, marketer funnel completeness, text/UGC polish, LinkedIn targeting cost/relevance, composite saliency text-placement automation (designed, not built), global learning rules disabled, `FLOW_IMG_*` blocked at LLM.
 
 ### 3. Brand Visual System (BVS)
 
@@ -145,7 +161,7 @@ Document: `brand_bibles`, `brand_bible_v1`, `generation_payload.bvs_v1`, `parseB
 
 ### 12. Database schema
 
-Bring `DATABASE_SCHEMA.md` current through latest migration (e.g. `078_brand_bibles.sql`). Include: `brand_bibles`, `brand_profiles`, `job_outcomes`, CI tables, idea lists, legacy `candidates_json` vs `planned_jobs_json`.
+Bring `DATABASE_SCHEMA.md` current through latest migration (e.g. `082_flow_vid_ugc.sql`). Include: `brand_bibles`, `brand_profiles`, `job_outcomes`, CI tables, idea lists, text/UGC flow seeds, legacy `candidates_json` vs `planned_jobs_json`.
 
 ### 13. Job lifecycle
 
@@ -155,7 +171,7 @@ Bring `DATABASE_SCHEMA.md` current through latest migration (e.g. `078_brand_bib
 
 ### 14. EXTERNAL_CONTEXT_PACK
 
-Instruct LLMs to start with current-state pack + volumes + `AGENTS.md`; warn older docs lag BVS / new visual / Why Mimic.
+Instruct LLMs to start with `FABLE_IMPROVEMENT_BRIEFING.md` (roadmaps) or current-state pack + volumes + `AGENTS.md`; warn older docs may lag text/UGC/routes.
 
 ## Preserve invariants (do not weaken)
 

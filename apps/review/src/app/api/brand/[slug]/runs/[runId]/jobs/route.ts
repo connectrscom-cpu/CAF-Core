@@ -1,3 +1,4 @@
+import { brandAccessDeniedResponse } from "@/lib/brand-access-guard";
 import { NextRequest, NextResponse } from "next/server";
 import { getRunDetail, listAdminJobsForRun } from "@/lib/caf-core-client";
 
@@ -8,6 +9,11 @@ type Ctx = { params: Promise<{ slug: string; runId: string }> };
 /** Poll content jobs for a run (marketer cart progress). */
 export async function GET(_req: NextRequest, ctx: Ctx) {
   const { slug, runId } = await ctx.params;
+  {
+    const denied = await brandAccessDeniedResponse(slug);
+    if (denied) return denied;
+  }
+
   if (!slug || !runId) {
     return NextResponse.json({ error: "Missing brand or run" }, { status: 400 });
   }

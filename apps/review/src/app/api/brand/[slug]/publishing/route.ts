@@ -1,3 +1,4 @@
+import { brandAccessDeniedResponse } from "@/lib/brand-access-guard";
 import { NextRequest, NextResponse } from "next/server";
 import { getQueueCounts, listPublicationPlacements, listProjects } from "@/lib/caf-core-client";
 import { toScheduledPosts } from "@/lib/marketer/publishing-adapters";
@@ -14,6 +15,11 @@ async function resolveDisplayName(slug: string): Promise<string> {
 
 export async function GET(_req: NextRequest, ctx: Ctx) {
   const { slug } = await ctx.params;
+  {
+    const denied = await brandAccessDeniedResponse(slug);
+    if (denied) return denied;
+  }
+
   if (!slug) return NextResponse.json({ error: "Missing brand" }, { status: 400 });
 
   const [counts, scheduled, published, brandDisplayName] = await Promise.all([

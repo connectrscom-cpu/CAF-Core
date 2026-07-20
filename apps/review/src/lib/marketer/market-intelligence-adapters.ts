@@ -82,7 +82,11 @@ export interface ResearchStatsView {
   emotions: Array<{ key: string; count: number; evidenceUrls?: string[]; sourceInsightIds?: string[] }>;
   platforms: Array<{ key: string; count: number; evidenceUrls?: string[]; sourceInsightIds?: string[] }>;
   themes: Array<{ key: string; count: number; evidenceUrls?: string[]; sourceInsightIds?: string[] }>;
+  jobRoles: Array<{ key: string; count: number; evidenceUrls?: string[]; sourceInsightIds?: string[] }>;
+  companies: Array<{ key: string; count: number; evidenceUrls?: string[]; sourceInsightIds?: string[] }>;
   distinctCreators: number;
+  /** LinkedIn person-first snapshot vs Meta formats/emotions/hooks. */
+  lens?: "meta" | "linkedin";
 }
 
 function parseStatBuckets(raw: unknown): ResearchStatsView["formats"] {
@@ -660,7 +664,10 @@ export function buildMarketIntelligenceViewFromV1(
         emotions: parseStatBuckets(statsRaw.emotions),
         platforms: parseStatBuckets(statsRaw.platforms),
         themes: parseStatBuckets(statsRaw.themes),
+        jobRoles: parseStatBuckets(statsRaw.job_roles),
+        companies: parseStatBuckets(statsRaw.companies),
         distinctCreators: Number(statsRaw.distinct_creators) || 0,
+        lens: statsRaw.lens === "linkedin" ? "linkedin" : statsRaw.lens === "meta" ? "meta" : undefined,
       }
     : undefined;
 

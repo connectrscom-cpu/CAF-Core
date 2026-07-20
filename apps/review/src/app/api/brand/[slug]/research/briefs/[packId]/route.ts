@@ -1,3 +1,4 @@
+import { brandAccessDeniedResponse } from "@/lib/brand-access-guard";
 import { NextRequest, NextResponse } from "next/server";
 import { listProjects, listSignalPacksForProject, patchSignalPackNotes } from "@/lib/caf-core-client";
 import { toResearchBrief } from "@/lib/marketer/idea-adapters";
@@ -15,6 +16,11 @@ async function resolveDisplayName(slug: string): Promise<string> {
 
 export async function PATCH(req: NextRequest, ctx: Ctx) {
   const { slug, packId } = await ctx.params;
+  {
+    const denied = await brandAccessDeniedResponse(slug);
+    if (denied) return denied;
+  }
+
   if (!slug || !packId) {
     return NextResponse.json({ error: "Missing brand or brief" }, { status: 400 });
   }

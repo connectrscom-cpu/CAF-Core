@@ -203,3 +203,109 @@ export async function buildSignalPackFromIdeaList(
   };
 }
 
+/**
+ * Research brief only — market intelligence from insights/TP, no idea LLM.
+ * Marketers create ideas later from Market Intelligence.
+ */
+export async function buildResearchBriefPackFromImport(
+  db: Pool,
+  config: AppConfig,
+  projectSlug: string,
+  importId: string,
+  opts?: {
+    run_name?: string | null;
+    notes?: string | null;
+  }
+): Promise<{ signal_pack_id: string; run_id: string; ideas_count: number; mode: "brief_only" }> {
+  const project = await ensureProject(db, projectSlug);
+  if (!/^[0-9a-f-]{36}$/i.test(importId)) {
+    throw new Error(`Invalid import id: ${importId}`);
+  }
+
+  const runId = `SIG_BRIEF_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}_${Date.now().toString(36).toUpperCase()}`;
+  const hashtagStats = await computeHashtagLeaderboardForEvidenceImport(db, project.id, importId, {
+    max_rows: 5000,
+    limit: 120,
+  });
+  const visualGuidelinesPack = await buildVisualGuidelinesPackForImport(db, project.id, importId, {
+    max_insights_scan: 2000,
+    max_entries: 48,
+  });
+  const derivedWithTpk = mergeTopPerformerKnowledgeIntoDerivedGlobals({
+    from_inputs_import_id: importId,
+    ideas_count: 0,
+    brief_only: true,
+    hashtag_leaderboard_v1: hashtagStats.leaderboard,
+    hashtag_leaderboard_rows_scanned: hashtagStats.rows_scanned,
+    visual_guidelines_pack_v1: visualGuidelinesPack,
+    created_at: new Date().toISOString(),
+  });
+  const marketIntelligenceV1 = await buildMarketIntelligenceForImport(
+    db,
+    config,
+    project.id,
+    projectSlug,
+    importId,
+    { derived_globals: derivedWithTpk, brand_display_name: project.display_name }
+  );
+  const packNotes = marketIntelligenceV1.research_brief_title
+    ? serializeMarketerResearchBriefNotes({
+        marketerTitle: marketIntelligenceV1.research_brief_title,
+        briefScope: "overall",
+        platforms: [],
+      })
+    : (opts?.notes ?? `Research brief from import ${importId}`);
+
+  const pack = await insertSignalPack(db, {
+    run_id: runId,
+    project_id: project.id,
+    source_window: null,
+    overall_candidates_json: [],
+    ideas_json: [],
+    selected_idea_ids_json: [],
+    source_inputs_idea_list_id: null,
+    derived_globals_json: {
+      ...derivedWithTpk,
+      research_brief_scope: "overall",
+      [MARKET_INTELLIGENCE_V1_KEY]: marketIntelligenceV1,
+    },
+    notes: packNotes,
+    upload_filename: `research_brief:${importId}`,
+    source_inputs_import_id: importId,
+  });
+
+  await spawnPlatformScopedResearchBriefPacks(db, config, {
+    projectId: project.id,
+    projectSlug,
+    brandDisplayName: project.display_name,
+    importId,
+    parentPackId: pack.id,
+    packRunId: runId,
+    parentDerivedGlobals: derivedWithTpk,
+    ideasJson: [],
+    overallCandidates: [],
+    marketerResearchMeta: null,
+  }).catch(() => ({ platform_pack_ids: [], platforms_spawned: [] }));
+
+  const displayName = trimRunDisplayName(opts?.run_name ?? null);
+  await createRun(db, {
+    run_id: runId,
+    project_id: project.id,
+    source_window: null,
+    signal_pack_id: pack.id,
+    metadata_json: {
+      ...(displayName ? { display_name: displayName } : {}),
+      from_inputs_import_id: importId,
+      ideas_count: 0,
+      brief_only: true,
+    },
+  });
+
+  return {
+    signal_pack_id: pack.id,
+    run_id: runId,
+    ideas_count: 0,
+    mode: "brief_only",
+  };
+}
+

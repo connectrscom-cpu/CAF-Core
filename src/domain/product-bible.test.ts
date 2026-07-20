@@ -6,6 +6,7 @@ import {
   filterProductBibleSnapshotByKey,
   parseProductBible,
   resolveHeygenProductReferenceAssets,
+  slimProductBibleForCreationPack,
 } from "./product-bible.js";
 import type { ProjectBrandAssetRow } from "../repositories/project-config.js";
 
@@ -136,7 +137,7 @@ describe("resolveHeygenProductReferenceAssets", () => {
 });
 
 describe("buildProductBibleVideoAgentPromptBlock", () => {
-  it("includes module labels and screenshot hint", () => {
+  it("lists File N lines with feature scope matching attachment order", () => {
     const draft = emptyProductBibleDraft();
     draft.application_guide.instructions = "Use real app screenshots";
     draft.products = [
@@ -145,14 +146,108 @@ describe("buildProductBibleVideoAgentPromptBlock", () => {
         label: "Meal Plan",
         description: "Weekly planner view",
         one_liner: "Plan meals fast",
-        features: [{ key: "recipes", label: "Recipes", description: "Browse recipes", asset_refs: [] }],
-        asset_refs: [{ asset_id: "a1", role: "screenshot", label: "Plan view", usage_notes: null, step_order: null }],
+        features: [
+          {
+            key: "recipes",
+            label: "Recipes",
+            description: "Browse recipes",
+            asset_refs: [
+              {
+                asset_id: "a1",
+                role: "feature_demo",
+                label: "Recipe detail screen",
+                usage_notes: "Show when talking about recipes",
+                step_order: null,
+              },
+            ],
+          },
+        ],
+        asset_refs: [
+          {
+            asset_id: "s1",
+            role: "workflow_step",
+            label: "Open weekly plan",
+            usage_notes: null,
+            step_order: 1,
+          },
+        ],
       },
     ];
-    const snapshot = buildProductBibleSnapshot(draft, [asset("a1", "https://a1")]);
-    const block = buildProductBibleVideoAgentPromptBlock(snapshot);
+    const snapshot = buildProductBibleSnapshot(draft, [
+      asset("a1", "https://a1"),
+      asset("s1", "https://s1"),
+    ]);
+    const refs = resolveHeygenProductReferenceAssets(snapshot);
+    expect(refs.map((r) => r.asset_id)).toEqual(["s1", "a1"]);
+    const block = buildProductBibleVideoAgentPromptBlock(snapshot, refs);
     expect(block).toContain("Product bible");
     expect(block).toContain("Meal Plan");
-    expect(block).toContain("Attached screenshots");
+    expect(block).toContain("Uploaded product evidence files (2 attached as File 1–2");
+    expect(block).toContain("File 1 [workflow step]: Open weekly plan — flow step 1");
+    expect(block).toContain("File 2 [Recipes]: Recipe detail screen — Show when talking about recipes");
+    expect(block).toContain("insert this real product UI");
+
+    const offsetBlock = buildProductBibleVideoAgentPromptBlock(snapshot, refs, { fileIndexOffset: 3 });
+    expect(offsetBlock).toContain("File 4–5");
+    expect(offsetBlock).toContain("File 4 [workflow step]: Open weekly plan — flow step 1");
+    expect(offsetBlock).toContain("File 5 [Recipes]: Recipe detail screen");
+  });
+});
+
+describe("slimProductBibleForCreationPack", () => {
+  it("exposes product_evidence_files with file_index aligned to HeyGen order", () => {
+    const draft = emptyProductBibleDraft();
+    draft.products = [
+      {
+        key: "meal_plan",
+        label: "Meal Plan",
+        description: null,
+        one_liner: null,
+        features: [],
+        asset_refs: [
+          {
+            asset_id: "s2",
+            role: "workflow_step",
+            label: "Step two",
+            usage_notes: null,
+            step_order: 2,
+          },
+          {
+            asset_id: "s1",
+            role: "workflow_step",
+            label: "Step one",
+            usage_notes: null,
+            step_order: 1,
+          },
+        ],
+      },
+    ];
+    const snapshot = buildProductBibleSnapshot(draft, [
+      asset("s1", "https://s1"),
+      asset("s2", "https://s2"),
+    ]);
+    const slim = slimProductBibleForCreationPack(snapshot);
+    expect(slim?.product_evidence_files).toEqual([
+      {
+        file_index: 1,
+        role: "workflow_step",
+        label: "Step one",
+        usage_notes: null,
+        step_order: 1,
+        product_key: "meal_plan",
+        feature_key: null,
+        scope_label: "workflow step",
+      },
+      {
+        file_index: 2,
+        role: "workflow_step",
+        label: "Step two",
+        usage_notes: null,
+        step_order: 2,
+        product_key: "meal_plan",
+        feature_key: null,
+        scope_label: "workflow step",
+      },
+    ]);
   });
 });

@@ -98,6 +98,10 @@ export async function GET(request: NextRequest) {
         generated_slides_json,
         preview_url: (j.preview_thumb_url ?? "").trim(),
         video_url: "",
+        health_state: j.job_health?.state ?? "",
+        health_reason_code: j.job_health?.reason_code ?? "",
+        health_message: j.job_health?.human_message ?? "",
+        health_action: j.job_health?.suggested_action ?? "",
       };
     });
 

@@ -20,6 +20,7 @@ import {
   VIDEO_LANE_OPTIONS,
   type VideoPipelineIntent,
 } from "@/lib/marketer/video-lane";
+import { PageTip } from "@/components/marketer/PageTip";
 import type { GenerationStrategy } from "@/lib/marketer/types";
 
 export function ContentCartDrawer() {
@@ -62,6 +63,22 @@ export function ContentCartDrawer() {
     () => filterGenerationStrategiesByEnabledFlows(enabledFlowTypes),
     [enabledFlowTypes]
   );
+
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setDrawerOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.classList.add("body-scroll-locked");
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.classList.remove("body-scroll-locked");
+      document.body.style.overflow = prev;
+    };
+  }, [drawerOpen, setDrawerOpen]);
 
   if (!drawerOpen) return null;
 
@@ -114,7 +131,10 @@ export function ContentCartDrawer() {
         </header>
 
         {displayItems.length === 0 ? (
-          <p className="content-cart-empty">Add ideas or top performers from the Ideas board.</p>
+          <div>
+            <p className="content-cart-empty">Add ideas or top performers from the Ideas board.</p>
+            <PageTip page="cart" salt="empty" compact />
+          </div>
         ) : (
           <ul className="content-cart-list">
             {displayItems.map((item) => {

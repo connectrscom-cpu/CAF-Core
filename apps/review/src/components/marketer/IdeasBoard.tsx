@@ -12,6 +12,7 @@ import {
   filterGenerationStrategiesByEnabledFlows,
 } from "@/lib/marketer/generation-strategy";
 import { resolveCartFlowForIdea } from "@/lib/marketer/cart-flow-resolve";
+import { humanizeFlowType } from "@/lib/marketer/language";
 import { filterResearchBriefsByPlatform } from "@/lib/marketer/research-adapters";
 import { ResearchBriefPlatformFilter } from "@/components/marketer/ResearchBriefPlatformFilter";
 import {
@@ -28,6 +29,17 @@ import type {
   ResearchBrief,
   TopPerformerRef,
 } from "@/lib/marketer/types";
+import { LoadingWithTip, PageTip } from "@/components/marketer/PageTip";
+
+const MANUAL_PLATFORMS = ["Instagram", "LinkedIn", "TikTok", "Reddit", "Facebook", "Multi"] as const;
+
+function isManualDestinationFlow(flowType: string): boolean {
+  const ft = flowType.trim().toUpperCase();
+  if (!ft.startsWith("FLOW_")) return false;
+  if (ft.startsWith("FLOW_TOP_PERFORMER_MIMIC")) return false;
+  if (ft.startsWith("FLOW_WHY_MIMIC")) return false;
+  return true;
+}
 
 interface IdeasBoardProps {
   slug: string;
@@ -109,6 +121,13 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
   const [queueHint, setQueueHint] = useState<string | null>(null);
   const [briefPlatformFilter, setBriefPlatformFilter] = useState("all");
   const [enabledFlowTypes, setEnabledFlowTypes] = useState<string[]>([]);
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manualTitle, setManualTitle] = useState("");
+  const [manualConcept, setManualConcept] = useState("");
+  const [manualDestination, setManualDestination] = useState("");
+  const [manualPlatform, setManualPlatform] = useState<string>("Instagram");
+  const [manualSaving, setManualSaving] = useState(false);
+  const [manualError, setManualError] = useState<string | null>(null);
   const packIdRef = useRef(packId);
   packIdRef.current = packId;
 
@@ -116,6 +135,23 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
     () => filterGenerationStrategiesByEnabledFlows(enabledFlowTypes),
     [enabledFlowTypes]
   );
+
+  const destinationOptions = useMemo(() => {
+    const flows = enabledFlowTypes.filter(isManualDestinationFlow);
+    return flows.map((ft) => ({ value: ft, label: humanizeFlowType(ft) }));
+  }, [enabledFlowTypes]);
+
+  useEffect(() => {
+    if (!manualDestination && destinationOptions[0]) {
+      setManualDestination(destinationOptions[0].value);
+    } else if (
+      manualDestination &&
+      destinationOptions.length > 0 &&
+      !destinationOptions.some((o) => o.value === manualDestination)
+    ) {
+      setManualDestination(destinationOptions[0]!.value);
+    }
+  }, [destinationOptions, manualDestination]);
 
   useEffect(() => {
     setLocal(readLocal(slug));
@@ -199,6 +235,60 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
     return "Select a research brief in Research context before queueing for generation.";
   }
 
+  async function submitManualIdea() {
+    setManualError(null);
+    const targetPack = packId && packId !== "all" ? packId : null;
+    if (!targetPack) {
+      setManualError("Select a specific research brief (not “All”) before adding your idea.");
+      return;
+    }
+    if (!manualTitle.trim()) {
+      setManualError("Add a short title for the idea.");
+      return;
+    }
+    if (!manualDestination.startsWith("FLOW_")) {
+      setManualError("Pick a generation destination.");
+      return;
+    }
+    setManualSaving(true);
+    try {
+      const res = await fetch(`/api/brand/${encodeURIComponent(slug)}/ideas`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          packId: targetPack,
+          title: manualTitle.trim(),
+          concept: manualConcept.trim() || undefined,
+          target_flow_type: manualDestination,
+          platform: manualPlatform,
+          content_lens: lensTab,
+        }),
+      });
+      const j = (await res.json().catch(() => ({}))) as { error?: string; idea?: ContentIdea };
+      if (!res.ok) {
+        setManualError(j.error || "Could not save idea.");
+        return;
+      }
+      setManualTitle("");
+      setManualConcept("");
+      setManualOpen(false);
+      if (j.idea) {
+        setIdeas((prev) => {
+          if (prev.some((i) => i.id === j.idea!.id)) return prev;
+          return [j.idea!, ...prev];
+        });
+        setExpandedId(j.idea.id);
+        setMainTab("new_content");
+      } else {
+        await load(new AbortController().signal);
+      }
+    } catch (e) {
+      setManualError(e instanceof Error ? e.message : "Could not save idea.");
+    } finally {
+      setManualSaving(false);
+    }
+  }
+
   function queueForGeneration(run: () => boolean) {
     setQueueHint(null);
     const ok = run();
@@ -265,7 +355,7 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
 
   const selectedCount = ideas.filter((i) => statusOf(i) === "selected").length;
 
-  if (loading) return <p className="workspace-muted">Loading ideas…</p>;
+  if (loading) return <LoadingWithTip page="ideas" label="Loading ideas…" />;
   if (error) return <p className="workspace-error">{error}</p>;
 
   const hasAnyContent = ideas.length > 0 || topPerformers.length > 0 || briefs.length > 0;
@@ -274,10 +364,14 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
     return (
       <div className="workspace-empty">
         <h3>No ideas yet</h3>
-        <p>Once research is processed into a brief, CAF will recommend content ideas here.</p>
+        <p>
+          Once research is processed into a brief, CAF will recommend content ideas here — or you can add your own
+          idea with a generation destination.
+        </p>
         <Link href={navHref(`/brand/${encodeURIComponent(slug)}/research`)} className="btn-primary">
           Start market research
         </Link>
+        <PageTip page="ideas" salt="empty" />
       </div>
     );
   }
@@ -419,6 +513,115 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
           <span className="ideas-count">
             {filteredIdeas.length} ideas · {selectedCount} selected
           </span>
+        )}
+
+        {mainTab === "new_content" && (
+          <div className="ideas-manual">
+            {!manualOpen ? (
+              <button
+                type="button"
+                className="btn-ghost btn-sm"
+                onClick={() => {
+                  setManualError(null);
+                  setManualOpen(true);
+                }}
+              >
+                Add your own idea
+              </button>
+            ) : (
+              <form
+                className="ideas-manual-form"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void submitManualIdea();
+                }}
+              >
+                <div className="ideas-manual-form-head">
+                  <h3>Add your own idea</h3>
+                  <button
+                    type="button"
+                    className="btn-ghost btn-sm"
+                    onClick={() => {
+                      setManualOpen(false);
+                      setManualError(null);
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+                <p className="ideas-manual-hint">
+                  Saved to the selected research brief. Pick the generation destination (carousel, video, LinkedIn
+                  post, …) so the cart routes correctly.
+                </p>
+                <div className="ideas-manual-grid">
+                  <label className="ideas-manual-field ideas-manual-field--wide">
+                    <span>Idea</span>
+                    <input
+                      type="text"
+                      value={manualTitle}
+                      onChange={(e) => setManualTitle(e.target.value)}
+                      placeholder="Short title"
+                      maxLength={200}
+                      required
+                    />
+                  </label>
+                  <label className="ideas-manual-field ideas-manual-field--wide">
+                    <span>Concept</span>
+                    <textarea
+                      value={manualConcept}
+                      onChange={(e) => setManualConcept(e.target.value)}
+                      placeholder="Optional — what the piece should say or argue"
+                      rows={2}
+                      maxLength={1200}
+                    />
+                  </label>
+                  <label className="ideas-manual-field">
+                    <span>Destination</span>
+                    <select
+                      value={manualDestination}
+                      onChange={(e) => setManualDestination(e.target.value)}
+                      required
+                    >
+                      {destinationOptions.length === 0 ? (
+                        <option value="">Enable content routes in brand setup</option>
+                      ) : (
+                        destinationOptions.map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  </label>
+                  <label className="ideas-manual-field">
+                    <span>Platform</span>
+                    <select value={manualPlatform} onChange={(e) => setManualPlatform(e.target.value)}>
+                      {MANUAL_PLATFORMS.map((p) => (
+                        <option key={p} value={p}>
+                          {p}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                {packId === "all" || !packId ? (
+                  <p className="content-cart-review-error">
+                    Select a specific research brief above (not “All research briefs”) to attach this idea.
+                  </p>
+                ) : null}
+                {manualError ? <p className="content-cart-review-error">{manualError}</p> : null}
+                <div className="ideas-manual-actions">
+                  <button
+                    type="submit"
+                    className="btn-primary btn-sm"
+                    disabled={manualSaving || destinationOptions.length === 0}
+                  >
+                    {manualSaving ? "Saving…" : "Save idea"}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
         )}
       </div>
 

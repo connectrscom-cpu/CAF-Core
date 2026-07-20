@@ -1,8 +1,10 @@
 # CAF Current State Context Pack — Quality Ops and Agent Map
 
-**Volume 4 of 4** | Generated 2026-07-10 | Full pack: docs/CAF_CURRENT_STATE_CONTEXT_PACK.md
+**Volume 4 of 4** | Regenerated 2026-07-16 from `docs/CAF_CURRENT_STATE_CONTEXT_PACK.md`  
+**Planning LLMs:** `docs/FABLE_IMPROVEMENT_BRIEFING.md`
 
 ---
+
 ## 12. QC, risk, validation, and quality gates
 
 ### QC runtime (`qc-runtime.ts` → `runQcForJob`)
@@ -189,6 +191,13 @@ See `ENV_AND_SECRETS_INVENTORY.md` and `src/config.ts` (Zod-validated).
 | Review app | Production | Embedded in Core | Marketer funnel incomplete vs admin | `apps/review/` |
 | Admin config | Production | `admin.ts`, project-config routes | HTML legacy mixed with API | `project-config.ts` |
 | Product image flows | Placeholder | Blocked at LLM | Not wired | `product-flow-types.ts` |
+| **Content routes** | Production (newer) | `content-routes.ts`, Review editor, setup pack §6 | Advanced lanes default off | `content-routes-apply.ts`, `CONTENT_ROUTES.md` |
+| **Text content flows** | Newer production | migration 081 + format routing | Review/publish polish | `text-content-flow-types.ts` |
+| **UGC video** | Newer production | migration 082 + `ugc-video.ts` | Host pool / dogfood | `FLOW_VID_UGC`, HeyGen script-led |
+| **Project setup packs** | Production | checklist + import + `/setup/*` | Fill quality / GAP handling | `PROJECT_SETUP_CHECKLIST.md`, onboarding import |
+| **LinkedIn research targeting** | Partial / newer | discovery + compile + Review API | Cost/relevance tuning | `linkedin-targeting-profile.ts` |
+| **Subject relevance guards** | Newer | pre-LLM rank + content-subject guards | Over/under filtering | `pre-llm-subject-relevance.ts` |
+| **Research platform briefs** | Newer | platform packs + pipeline panel | Consistency across platforms | `research-brief-platform*.ts` |
 
 ---
 
@@ -206,12 +215,16 @@ See `ENV_AND_SECRETS_INVENTORY.md` and `src/config.ts` (Zod-validated).
 | Mimic | `mimic-draft-prep.ts`, `mimic-carousel-render.ts`, `mimic-payload.ts` | Conflate `carousel_package` with `mimic_carousel_package` |
 | BVS | `brand-bible.ts`, `bvs-v1.ts`, `bvs-render-plan.ts` | — |
 | New visual | `new-visual-carousel-prep.ts`, `new-visual-carousel-execution.ts` | Re-add TP references to visual-first |
-| Inputs | `inputs-processing.ts`, `inputs-evidence.ts` | Signal pack JSON contracts |
+| Inputs | `inputs-processing.ts`, `inputs-evidence.ts`, `linkedin-discovery.ts` | Signal pack JSON contracts |
+| Content routes | `content-routes.ts`, `content-routes-apply.ts`, Review `ContentRoutesEditor` | Orphan quotas vs disabled flows |
+| Text / UGC flows | `text-content-flow-types.ts`, `ugc-video.ts`, `format-routing.ts` | ID / lifecycle patterns |
+| Project setup / onboarding | `onboarding-pack-import.ts`, `PROJECT_SETUP_CHECKLIST.md` | — |
 | Publishing | `publications.ts`, `meta-graph-publish.ts` | Placement lifecycle strings |
 | Learning | `learning-rule-selection.ts` facade only | Direct `listActiveAppliedLearningRules` imports |
 | Env / config | `src/config.ts` | — |
 | Review contract | `review-contract.test.ts` | Rename paths without updating test |
 | Schema truth | `migrations/` | — |
+| **Fable / improvement planning** | `docs/FABLE_IMPROVEMENT_BRIEFING.md` | Attaching entire `src/` tree |
 
 ---
 
@@ -238,65 +251,74 @@ See `ENV_AND_SECRETS_INVENTORY.md` and `src/config.ts` (Zod-validated).
 ## 20. Documentation drift and required updates
 
 ### Still accurate
-- `AGENTS.md` — invariants match code
+- `AGENTS.md` — invariants match code (extend when adding new “where to change” rows)
 - `docs/DOMAIN_MODEL.md` — ID patterns (minor column naming caveat)
 - `docs/LIFECYCLE.md` — run states (job diagram omits `GENERATED`)
 - `docs/QUALITY_CHECKS.md`, `docs/RISK_RULES.md` — risk_rules vs risk_policies asymmetry
-- `docs/EXTERNAL_CONTEXT_PACK.md` — tier structure (needs new pack reference)
-- `docs/CAF_INPUTS_PIPELINE_ROADMAP.md` — largely matches implementation
+- `docs/EXTERNAL_CONTEXT_PACK.md` — tier structure (points at this pack + Fable briefing)
+- `docs/CAF_INPUTS_PIPELINE_ROADMAP.md` — largely matches; LinkedIn/subject-relevance are additive
+- `docs/CONTENT_ROUTES.md`, `docs/PROJECT_SETUP_CHECKLIST.md` — current for setup
+- `docs/FABLE_IMPROVEMENT_BRIEFING.md` — planning entry for expensive models
 - `.cursor/rules/caf-domain-model.mdc`, `mimic-carousel-package.mdc`, `mimic-signal-pack-llm-filter.mdc`
 
-### Outdated or incomplete
-| Doc | Drift |
+### May lag (prefer this pack on conflicts)
+| Doc | Notes |
 |-----|-------|
-| `docs/MIMIC_FLOWS_COMPLETE_GUIDE.md` | Visual-first still described as TP-grounded; missing `execution_mode`, Why Mimic, new visual, BVS |
-| `docs/CREATIVE_INTELLIGENCE.md` | No SIL, `mimic_evaluation`, new-visual lane |
-| `docs/MIMIC_IMAGE_FLOWS.md` | Pre-BVS, pre-new-visual |
-| `visual-first-carousel-flow-types.ts` header comment | Still says TP-grounded references |
-| `docs/CAF_CORE_COMPLETE_GUIDE.md` | Merged summary stale on BVS, Why Mimic, new visual (June 2026 stamp) |
-| `docs/DATABASE_SCHEMA.md` | Missing `brand_bibles`, `brand_profiles`, `job_outcomes`, slide intelligence columns |
-| `docs/export/README.md` | Last generated 2026-06-16; no current-state pack |
-| `docs/JOB_LIFECYCLE.md` | May omit `GENERATED`, `QC_FAILED` split-brain |
+| `docs/volumes/CAF_CONTEXT_VOL*.md` | Split copies — regenerate after major pack edits |
+| `docs/CAF_CORE_COMPLETE_GUIDE.md` | Merged summary — may lag text/UGC/routes |
+| `docs/DATABASE_SCHEMA.md` | Table catalog — verify against migrations 079–082 |
+| `docs/MIMIC_FLOWS_COMPLETE_GUIDE.md` | Still useful; edge cases → this pack |
+| `docs/CAF_COMPLETE_PRODUCT_GUIDE.md` / pitch | Product narrative — add routes/text/UGC when pitching |
 
-### Features in code, not documented
-- Brand Visual System (`brand_bibles`, `bvs_v1`, `bvs_render_plan`, invented plates)
-- `FLOW_WHY_MIMIC_CAROUSEL` + slide intelligence layer
-- `FLOW_VISUAL_FIRST_CAROUSEL` as **new visual** (not TP replication)
-- `execution_mode` on `mimic_v1` (`classic`|`why_mimic`|`new_visual`)
-- `job_outcomes` table (075)
-- `CarouselBrandStylingPanel` + live preview overlays in Review
-- Per-project mimic render settings (migrations 066–069)
-- `MIMIC_CAROUSEL_TEXT_VIA_FLUX` ignored at render (hardcoded false)
+### Features in code (documented here as of 2026-07-16)
+- Content routes + Review editor + setup pack §6
+- Text content flows (migration 081) + UGC video (migration 082)
+- LinkedIn targeting / discovery, research platform briefs, subject-relevance guards
+- Project setup checklists under `docs/` and `apps/review/public/setup/`
+- Brand Visual System, Why Mimic, new visual (from prior July baseline)
 
 ### Documented but not fully implemented
 - `docs/MIMIC_TEXT_PLACEMENT_AUTOMATION.md` — composite saliency analyzer
 - Project `risk_rules` enforcement (documented as config-only — correct)
 - Stage-3 structured idea picker (roadmap TBD)
 - Global learning rules in generation compiler
+- `FLOW_IMG_*` product image generation
 
-### Suggested update priority
-1. **`docs/MIMIC_FLOWS_COMPLETE_GUIDE.md`** — add execution modes, new visual, Why Mimic, BVS section
-2. **`docs/DATABASE_SCHEMA.md`** — brand_bibles, job_outcomes, SIL columns
-3. **`docs/CREATIVE_INTELLIGENCE.md`** — downstream SIL + mimic_evaluation
-4. **`docs/CAF_CORE_COMPLETE_GUIDE.md`** — merge BVS + new flows or point to this pack
-5. **`docs/export/README.md`** — add current-state PDF volumes
-6. **Cursor rule `visual-first-carousel-flow.mdc`** — align header with new_visual semantics
-7. **`docs/JOB_LIFECYCLE.md`** — add `GENERATED`, clarify `QC_FAILED` scope
+### Suggested update priority (remaining)
+1. Sync `docs/volumes/*` from this pack (or regenerate via export pipeline)
+2. Spot-update `DATABASE_SCHEMA.md` for 079–082 if table/API catalog drifts
+3. Fill `docs/CAF_DOGFOOD_NOTES.md` during Cuisina/VaultLM dogfood — feed Fable rankings
+4. Regenerate PDFs: `npm run export:doc-pdfs`
 
 ---
 
-## Appendix A — ChatGPT upload bundle (2026-07)
+## 21. Improvement surfaces (for planning models)
 
-For external LLM projects, upload **in order**:
+See **`docs/FABLE_IMPROVEMENT_BRIEFING.md`** for the full prompt + ranked-output format. Themes:
+
+1. Operator trust (render failures, clearer Review errors, resume/recover)
+2. Time-to-first-publish (onboarding → routes → research → ideas → cart)
+3. Research quality (LinkedIn targeting cost/relevance, subject guards)
+4. Text/UGC polish vs hiding unfinished lanes
+5. QC/learning honesty (`risk_rules`, global learning rules)
+6. Cost caps (Apify/LLM) and disabling unused routes
+
+---
+
+## Appendix A — ChatGPT / Fable upload bundle (2026-07-16)
+
+For **improvement planning** (Fable / Claude), upload **in order**:
 
 | Priority | File |
 |----------|------|
-| 1 | `docs/CAF_CURRENT_STATE_CONTEXT_PACK.md` (this file) OR volumes 1–4 |
-| 2 | `AGENTS.md` |
-| 3 | `docs/EXTERNAL_CONTEXT_PACK.md` |
-| 4 | `apps/review/CHATGPT_CAROUSEL_REVIEW_CONSOLE_EDIT_GUIDE.md` (operator mimic workflow) |
-| 5 | Topic add-ons: `docs/MIMIC_FLOWS_COMPLETE_GUIDE.md` (until updated), `docs/CREATIVE_INTELLIGENCE.md` |
+| 1 | `docs/FABLE_IMPROVEMENT_BRIEFING.md` |
+| 2 | `docs/CAF_CURRENT_STATE_CONTEXT_PACK.md` (this file) OR volumes 1–4 |
+| 3 | `AGENTS.md` |
+| 4 | `docs/EXTERNAL_CONTEXT_PACK.md` |
+| 5 | Optional: `docs/CONTENT_ROUTES.md`, `docs/PROJECT_SETUP_CHECKLIST.md`, `docs/CAF_DOGFOOD_NOTES.md` |
 
-**System prompt:** Use the template in `docs/EXTERNAL_CONTEXT_PACK.md` § "System prompt template".
+For **operator mimic workflow**, also: `apps/review/CHATGPT_CAROUSEL_REVIEW_CONSOLE_EDIT_GUIDE.md` if present.
+
+**System prompt:** Prefer the template in `docs/FABLE_IMPROVEMENT_BRIEFING.md` for roadmaps; use `docs/EXTERNAL_CONTEXT_PACK.md` for general engineering Q&A.
 
 **Regenerate PDFs:** `npm run export:doc-pdfs` after doc changes.

@@ -48,6 +48,7 @@
 | Mimic / creative team | `07` |
 | Job lifecycle (ops / engineers) | `10-caf-job-lifecycle.pdf` |
 | ChatGPT / Claude project (fresh context) | **`11` + `12` + `13` + `14`** (current-state volumes) or `docs/CAF_CURRENT_STATE_CONTEXT_PACK.md` |
+| **Fable / expensive improvement planning** | Markdown: `docs/FABLE_IMPROVEMENT_BRIEFING.md` + current-state pack + `AGENTS.md` + `docs/EXTERNAL_CONTEXT_PACK.md` (see briefing Bundle A) |
 | ChatGPT / Claude project (classic) | `02` (or upload Tier 1 markdown from EXTERNAL_CONTEXT_PACK) |
 
 ---

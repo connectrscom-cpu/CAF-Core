@@ -16,6 +16,7 @@ import {
   assetIdFromBrandProxyUrl,
   resolveBrandFrameReprintUrl,
   resolveBrandLogoReprintUrl,
+  resolveBrandLogoReprintUrlById,
 } from "@/lib/brand-asset-url";
 import { CAF_CORE_URL as ENV_CAF_CORE_URL } from "@/lib/env";
 
@@ -60,30 +61,36 @@ function parseLayerPosOverrides(raw: unknown): MimicDocAiLayerPositionOverride[]
 async function resolveLogoOverlay(
   projectSlug: string,
   raw: unknown
-): Promise<{ url: string; position: string } | undefined> {
+): Promise<{ url: string; position: string; asset_id?: string } | undefined> {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   let logoUrl = typeof (raw as Record<string, unknown>).url === "string" ? String((raw as Record<string, unknown>).url).trim() : "";
-  if (!logoUrl) return undefined;
+  const logoAssetId =
+    typeof (raw as Record<string, unknown>).asset_id === "string"
+      ? String((raw as Record<string, unknown>).asset_id).trim()
+      : "";
+  if (!logoUrl && !logoAssetId) return undefined;
   const slug = projectSlug.trim();
-  if (logoUrl.startsWith("/api/project-config/brand-assets/proxy") && slug) {
+  if (slug && (logoAssetId || logoUrl.startsWith("/api/project-config/brand-assets/proxy") || !/^https?:\/\//i.test(logoUrl))) {
     const assets = await listBrandAssets(slug);
     const pool = assets?.brand_assets ?? [];
     const proxyId = assetIdFromBrandProxyUrl(logoUrl);
-    logoUrl = resolveBrandLogoReprintUrl(slug, pool, CAF_CORE_URL);
-    if (!logoUrl && proxyId) {
-      const hit = pool.find((a) => a.id === proxyId);
-      if (hit) logoUrl = resolveBrandLogoReprintUrl(slug, [hit], CAF_CORE_URL);
+    const pickId = logoAssetId || proxyId;
+    if (pickId) {
+      logoUrl = resolveBrandLogoReprintUrlById(slug, pool, pickId, CAF_CORE_URL);
+    } else {
+      logoUrl = resolveBrandLogoReprintUrl(slug, pool, CAF_CORE_URL);
     }
-  } else if (slug && !/^https?:\/\//i.test(logoUrl)) {
-    const assets = await listBrandAssets(slug);
-    logoUrl = resolveBrandLogoReprintUrl(slug, assets?.brand_assets ?? [], CAF_CORE_URL);
   }
   if (!logoUrl) return undefined;
   const position =
     typeof (raw as Record<string, unknown>).position === "string"
       ? String((raw as Record<string, unknown>).position).trim()
       : "br";
-  return { url: logoUrl, position: position || "br" };
+  return {
+    url: logoUrl,
+    position: position || "br",
+    ...(logoAssetId ? { asset_id: logoAssetId } : {}),
+  };
 }
 
 async function resolveFrameOverlay(

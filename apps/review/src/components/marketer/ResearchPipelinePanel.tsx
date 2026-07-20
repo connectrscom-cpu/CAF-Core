@@ -2,12 +2,28 @@
 
 /**
  * Post-scrape research pipeline for marketers:
- * pick scrape run → cutoff → broad insights → optional top-performer deep analysis.
+ * pick scrape run → cutoff + TP thresholds → Start runs broad insights then optional
+ * top-performer deep analysis (carousel / video) with the same button.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 
 export type PipelineStep = "cutoff" | "analyzing" | "top_performers" | "done";
+
+function clampTopPct(pct: number): number {
+  return Math.min(20, Math.max(1, Math.round(pct)));
+}
+
+function topFractionFromPct(pct: number): number {
+  return Math.min(0.5, Math.max(0.01, clampTopPct(pct) / 100));
+}
+
+interface ProfileSummary {
+  rating_model: string;
+  synth_model: string;
+  max_ideas_in_signal_pack: number;
+  min_llm_score_for_pack: number;
+}
 
 const KIND_LABELS: Record<string, string> = {
   instagram_post: "Instagram",
@@ -62,6 +78,8 @@ interface ResearchPipelinePanelProps {
   evidenceImports: ResearchEvidenceImportOption[];
   scraperRunning: boolean;
   scraperStatusText: string | null;
+  /** Called after a signal pack is built so the briefs list can refresh. */
+  onBriefCreated?: (packId: string) => void;
 }
 
 function formatRunWhen(iso: string | null | undefined): string {
@@ -90,6 +108,7 @@ export function ResearchPipelinePanel({
   evidenceImports,
   scraperRunning,
   scraperStatusText,
+  onBriefCreated,
 }: ResearchPipelinePanelProps) {
   const selectableRuns = useMemo(() => {
     const fromScrapers = scraperRuns.filter(
@@ -128,13 +147,19 @@ export function ResearchPipelinePanel({
   const [loadingKinds, setLoadingKinds] = useState(false);
   const [statusLines, setStatusLines] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [tpTopPct, setTpTopPct] = useState(5);
+  const [tpCarouselTopPct, setTpCarouselTopPct] = useState(5);
+  const [tpVideoTopPct, setTpVideoTopPct] = useState(5);
   const [tpCarouselMax, setTpCarouselMax] = useState(30);
   const [tpVideoMax, setTpVideoMax] = useState(16);
   const [doCarousel, setDoCarousel] = useState(true);
   const [doVideo, setDoVideo] = useState(true);
   const [progressLog, setProgressLog] = useState<string[]>([]);
   const previewTimers = useRef<Record<string, number>>({});
+  const evidenceFileRef = useRef<HTMLInputElement>(null);
+  const [profile, setProfile] = useState<ProfileSummary | null>(null);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [builtPackId, setBuiltPackId] = useState<string | null>(null);
+  const [evidenceUploading, setEvidenceUploading] = useState(false);
 
   // Pick default completed run whenever options change.
   useEffect(() => {
@@ -155,6 +180,24 @@ export function ResearchPipelinePanel({
       return preferred.evidence_import_id ?? null;
     });
   }, [selectableRuns, defaultImportId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setProfileLoading(true);
+    fetch(`/api/brand/${encodeURIComponent(slug)}/research/profile`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: { ok?: boolean; profile?: ProfileSummary } | null) => {
+        if (cancelled || !j?.ok || !j.profile) return;
+        setProfile(j.profile);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setProfileLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [slug]);
 
   const pushStatus = useCallback((line: string) => {
     setStatusLines((prev) => [...prev.slice(-12), line]);
@@ -335,12 +378,77 @@ export function ResearchPipelinePanel({
     setError(null);
   }
 
+  async function runTopPerformersAfterInsights(activeImportId: string) {
+    if (!doCarousel && !doVideo) {
+      pushStatus("Skipped top-performer deep analysis (carousel and video both off).");
+      return;
+    }
+    setStep("top_performers");
+    setProgressLog([]);
+    pushStatus(
+      "Insights ready — starting top-performer deep analysis. We’ll show progress as carousels and videos are inspected."
+    );
+    if (doCarousel) {
+      const carouselPct = clampTopPct(tpCarouselTopPct);
+      pushStatus(
+        `Starting carousel deep analysis (top ${carouselPct}%, up to ${tpCarouselMax})…`
+      );
+      const res = await fetch(`/api/brand/${encodeURIComponent(slug)}/research/pipeline`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "run_tp_carousel",
+          importId: activeImportId,
+          max_rows: tpCarouselMax,
+          rating_top_fraction: topFractionFromPct(carouselPct),
+        }),
+      });
+      const j = (await res.json()) as {
+        ok?: boolean;
+        message?: string;
+        progress_id?: string;
+        qualifying?: number;
+      };
+      if (!res.ok || !j.ok) throw new Error(j.message ?? "Carousel analysis failed");
+      if (j.progress_id) {
+        await pollProgress(j.progress_id);
+      }
+      pushStatus(
+        j.qualifying != null
+          ? `Carousel analysis done (${j.qualifying} qualifying).`
+          : "Carousel analysis done."
+      );
+    }
+    if (doVideo) {
+      const videoPct = clampTopPct(tpVideoTopPct);
+      pushStatus(`Starting video deep analysis (top ${videoPct}%, up to ${tpVideoMax})…`);
+      const res = await fetch(`/api/brand/${encodeURIComponent(slug)}/research/pipeline`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "run_tp_video",
+          importId: activeImportId,
+          max_rows: tpVideoMax,
+          rating_top_fraction: topFractionFromPct(videoPct),
+        }),
+      });
+      const j = (await res.json()) as { ok?: boolean; message?: string; qualifying?: number };
+      if (!res.ok || !j.ok) throw new Error(j.message ?? "Video analysis failed");
+      pushStatus(
+        j.qualifying != null
+          ? `Video analysis done (${j.qualifying} qualifying).`
+          : "Video analysis done."
+      );
+    }
+  }
+
   async function startAnalysis() {
     if (!importId) return;
     setBusy(true);
     setError(null);
     setStep("analyzing");
     setStatusLines([]);
+    setProgressLog([]);
     pushStatus("Saving your evidence cutoffs…");
     try {
       for (const k of kinds) {
@@ -355,8 +463,17 @@ export function ResearchPipelinePanel({
           }),
         });
       }
+      const tpPlan =
+        doCarousel || doVideo
+          ? [
+              doCarousel ? `carousels top ${clampTopPct(tpCarouselTopPct)}%` : null,
+              doVideo ? `videos top ${clampTopPct(tpVideoTopPct)}%` : null,
+            ]
+              .filter(Boolean)
+              .join(", ")
+          : "no top-performer pass";
       pushStatus(
-        `Analyzing ~${poolForAnalysis} posts across ${kinds.length} platform(s). This can take several minutes — go do something else; CAF will keep working.`
+        `Analyzing ~${poolForAnalysis} posts across ${kinds.length} platform(s). After insights, CAF will run deep analysis (${tpPlan}). This can take several minutes.`
       );
       const res = await fetch(`/api/brand/${encodeURIComponent(slug)}/research/pipeline`, {
         method: "POST",
@@ -371,81 +488,14 @@ export function ResearchPipelinePanel({
       const j = (await res.json()) as { ok?: boolean; message?: string; summary?: string };
       if (!res.ok || !j.ok) throw new Error(j.message ?? "Analysis failed");
       pushStatus(j.summary ?? "Broad analysis finished.");
-      setStep("top_performers");
+      await runTopPerformersAfterInsights(importId);
+      setStep("done");
+      pushStatus(
+        "Research brief foundation is ready. Create a research brief below, or open Intelligence to explore patterns."
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Analysis failed");
       setStep("cutoff");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function runTopPerformers() {
-    if (!importId) return;
-    if (!doCarousel && !doVideo) {
-      setStep("done");
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    setProgressLog([]);
-    const fraction = Math.min(0.5, Math.max(0.01, tpTopPct / 100));
-    pushStatus(
-      "Deep top-performer analysis is the longest step. Grab a coffee — we’ll show progress as carousels and videos are inspected."
-    );
-    try {
-      if (doCarousel) {
-        pushStatus(`Starting carousel deep analysis (top ${tpTopPct}%, up to ${tpCarouselMax})…`);
-        const res = await fetch(`/api/brand/${encodeURIComponent(slug)}/research/pipeline`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "run_tp_carousel",
-            importId,
-            max_rows: tpCarouselMax,
-            rating_top_fraction: fraction,
-          }),
-        });
-        const j = (await res.json()) as {
-          ok?: boolean;
-          message?: string;
-          progress_id?: string;
-          qualifying?: number;
-        };
-        if (!res.ok || !j.ok) throw new Error(j.message ?? "Carousel analysis failed");
-        if (j.progress_id) {
-          await pollProgress(j.progress_id);
-        }
-        pushStatus(
-          j.qualifying != null
-            ? `Carousel analysis done (${j.qualifying} qualifying).`
-            : "Carousel analysis done."
-        );
-      }
-      if (doVideo) {
-        pushStatus(`Starting video deep analysis (top ${tpTopPct}%, up to ${tpVideoMax})…`);
-        const res = await fetch(`/api/brand/${encodeURIComponent(slug)}/research/pipeline`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "run_tp_video",
-            importId,
-            max_rows: tpVideoMax,
-            rating_top_fraction: fraction,
-          }),
-        });
-        const j = (await res.json()) as { ok?: boolean; message?: string; qualifying?: number };
-        if (!res.ok || !j.ok) throw new Error(j.message ?? "Video analysis failed");
-        pushStatus(
-          j.qualifying != null
-            ? `Video analysis done (${j.qualifying} qualifying).`
-            : "Video analysis done."
-        );
-      }
-      setStep("done");
-      pushStatus("Research brief foundation is ready. Open Intelligence to explore patterns and generate ideas.");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Top performer analysis failed");
     } finally {
       setBusy(false);
     }
@@ -468,6 +518,79 @@ export function ResearchPipelinePanel({
         setProgressLog(lines.slice(-8).map((l) => l.message));
       }
       if (j.progress?.finished_at) break;
+    }
+  }
+
+  async function createResearchBrief() {
+    if (!importId) return;
+    setBusy(true);
+    setError(null);
+    setBuiltPackId(null);
+    pushStatus("Creating research brief from insights…");
+    try {
+      const res = await fetch(`/api/brand/${encodeURIComponent(slug)}/research/pipeline`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "build_signal_pack",
+          importId,
+        }),
+      });
+      const j = (await res.json()) as {
+        ok?: boolean;
+        message?: string;
+        signal_pack_id?: string;
+        ideas_count?: number;
+        step?: string;
+        next_action?: string;
+      };
+      if (!res.ok || !j.ok || !j.signal_pack_id) {
+        const step = j.step ? `[${j.step}] ` : "";
+        const next = j.next_action ? ` Next: ${j.next_action}` : "";
+        throw new Error(`${step}${j.message ?? "Could not create research brief."}${next}`);
+      }
+      setBuiltPackId(j.signal_pack_id);
+      pushStatus(j.message ?? `Brief ${j.signal_pack_id} ready.`);
+      onBriefCreated?.(j.signal_pack_id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not create research brief");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function uploadEvidenceWorkbook(file: File) {
+    setEvidenceUploading(true);
+    setError(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(`/api/brand/${encodeURIComponent(slug)}/research/evidence-upload`, {
+        method: "POST",
+        body: fd,
+      });
+      const j = (await res.json()) as {
+        ok?: boolean;
+        message?: string;
+        importId?: string;
+        totalRows?: number;
+      };
+      if (!res.ok || !j.ok || !j.importId) {
+        throw new Error(
+          j.message ??
+            "Evidence upload failed. Use a CAF evidence .xlsx, or run scrapers instead."
+        );
+      }
+      pushStatus(j.message ?? `Imported ${j.totalRows ?? 0} rows.`);
+      onBriefCreated?.(j.importId);
+    } catch (e) {
+      setError(
+        e instanceof Error
+          ? `Evidence upload: ${e.message}`
+          : "Evidence upload failed"
+      );
+    } finally {
+      setEvidenceUploading(false);
     }
   }
 
@@ -496,9 +619,35 @@ export function ResearchPipelinePanel({
       <section className="research-section research-pipeline" data-agent-id="research-pipeline-empty">
         <h3>Build your research brief</h3>
         <p className="research-lead">
-          Start a scrape above first. When a run completes, you&apos;ll pick it here, set how many posts to keep
-          per platform, then run analysis.
+          Start a scrape on the Scrapers tab, or upload an evidence .xlsx workbook here. When evidence is ready,
+          you&apos;ll set cutoffs and top-performer thresholds, run analysis, then create a research brief.
         </p>
+        {error && <p className="workspace-error">{error}</p>}
+        <div className="research-upload-panel" style={{ marginTop: 12 }}>
+          <input
+            ref={evidenceFileRef}
+            type="file"
+            accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            className="research-upload-input-hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (file) void uploadEvidenceWorkbook(file);
+            }}
+          />
+          <button
+            type="button"
+            className="btn-primary btn-sm"
+            disabled={evidenceUploading}
+            onClick={() => evidenceFileRef.current?.click()}
+            data-agent-id="research-evidence-upload"
+          >
+            {evidenceUploading ? "Uploading…" : "Upload evidence .xlsx"}
+          </button>
+          <Link href={`/brand/${encodeURIComponent(slug)}/research?tab=scrapers`} className="btn-ghost btn-sm">
+            Go to scrapers
+          </Link>
+        </div>
         {failedRuns.length > 0 && (
           <ul className="research-runs">
             {failedRuns.map((run) => (
@@ -518,7 +667,8 @@ export function ResearchPipelinePanel({
     <section className="research-section research-pipeline" data-agent-id="research-pipeline">
       <h3>Build your research brief</h3>
       <p className="research-lead">
-        Pick a completed scrape run, tune how many posts pass the cutoff per platform, then start analysis.
+        Pick a completed scrape run, tune cutoffs and top-performer thresholds, then start analysis. One click runs
+        insights first, then deep carousel/video analysis with the thresholds you set.
       </p>
       {error && <p className="workspace-error">{error}</p>}
 
@@ -641,53 +791,12 @@ export function ResearchPipelinePanel({
             Into research analysis: <strong>~{poolForAnalysis}</strong> posts
             {totalAfterCutoff > maxRows ? ` (${totalAfterCutoff} pass cutoffs, capped at ${maxRows})` : ""}.
           </p>
-          <button
-            type="button"
-            className="btn-primary"
-            disabled={busy || kinds.length === 0 || poolForAnalysis === 0}
-            onClick={() => void startAnalysis()}
-            data-agent-id="research-start-analysis"
-          >
-            {busy ? "Starting…" : `Start research analysis (~${poolForAnalysis})`}
-          </button>
-        </div>
-      )}
 
-      {step === "analyzing" && (
-        <div className="research-chill-card">
-          <p className="research-chill-title">Analyzing every selected post</p>
-          <p className="research-lead">
-            CAF is reading captions and engagement signals platform by platform. This often takes 5–15 minutes.
-            You don’t need to watch the screen — we’ll unlock the next step when it’s done.
+          <h4 style={{ marginTop: 20 }}>3. Top performer thresholds</h4>
+          <p className="workspace-muted">
+            Set how selective the deep pass should be. These only run after insights finish — same Start button
+            chains both. Uncheck a format to skip it.
           </p>
-          <ul className="research-status-log">
-            {statusLines.map((line, i) => (
-              <li key={`${i}-${line.slice(0, 24)}`}>{line}</li>
-            ))}
-          </ul>
-          <div className="research-pulse" aria-hidden />
-        </div>
-      )}
-
-      {step === "top_performers" && (
-        <div className="research-pipeline-step">
-          <h4>3. Top performer deep analysis (optional)</h4>
-          <p className="research-lead">
-            This is the longest step. CAF inspects winning carousels and videos so mimic and visual routes have
-            strong references. Skip if you only need text patterns for now.
-          </p>
-          <label className="research-cutoff-slider">
-            <span>Top performers: top {tpTopPct}% of eligible media</span>
-            <input
-              type="range"
-              min={1}
-              max={20}
-              step={1}
-              value={tpTopPct}
-              onChange={(e) => setTpTopPct(Number(e.target.value))}
-              disabled={busy}
-            />
-          </label>
           <div className="research-tp-toggles">
             <label>
               <input
@@ -695,18 +804,9 @@ export function ResearchPipelinePanel({
                 checked={doCarousel}
                 onChange={(e) => setDoCarousel(e.target.checked)}
                 disabled={busy}
+                data-agent-id="research-tp-carousel"
               />{" "}
-              Carousels (up to{" "}
-              <input
-                type="number"
-                min={1}
-                max={40}
-                value={tpCarouselMax}
-                onChange={(e) => setTpCarouselMax(Number(e.target.value))}
-                disabled={busy}
-                style={{ width: 56 }}
-              />
-              )
+              Carousels
             </label>
             <label>
               <input
@@ -714,65 +814,186 @@ export function ResearchPipelinePanel({
                 checked={doVideo}
                 onChange={(e) => setDoVideo(e.target.checked)}
                 disabled={busy}
+                data-agent-id="research-tp-video"
               />{" "}
-              Videos (up to{" "}
-              <input
-                type="number"
-                min={1}
-                max={40}
-                value={tpVideoMax}
-                onChange={(e) => setTpVideoMax(Number(e.target.value))}
-                disabled={busy}
-                style={{ width: 56 }}
-              />
-              )
+              Videos
             </label>
           </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+          {doCarousel && (
+            <div className="research-tp-format-settings">
+              <label className="research-cutoff-slider">
+                <span>Carousel top performers: top {clampTopPct(tpCarouselTopPct)}%</span>
+                <input
+                  type="range"
+                  min={1}
+                  max={20}
+                  step={1}
+                  value={tpCarouselTopPct}
+                  onChange={(e) => setTpCarouselTopPct(Number(e.target.value))}
+                  disabled={busy}
+                  data-agent-id="research-tp-carousel-pct"
+                />
+              </label>
+              <label className="research-cutoff-slider">
+                <span>
+                  Carousel max rows:{" "}
+                  <input
+                    type="number"
+                    min={1}
+                    max={40}
+                    value={tpCarouselMax}
+                    onChange={(e) => setTpCarouselMax(Number(e.target.value))}
+                    disabled={busy}
+                    style={{ width: 56 }}
+                    data-agent-id="research-tp-carousel-max"
+                  />
+                </span>
+              </label>
+            </div>
+          )}
+          {doVideo && (
+            <div className="research-tp-format-settings">
+              <label className="research-cutoff-slider">
+                <span>Video top performers: top {clampTopPct(tpVideoTopPct)}%</span>
+                <input
+                  type="range"
+                  min={1}
+                  max={20}
+                  step={1}
+                  value={tpVideoTopPct}
+                  onChange={(e) => setTpVideoTopPct(Number(e.target.value))}
+                  disabled={busy}
+                  data-agent-id="research-tp-video-pct"
+                />
+              </label>
+              <label className="research-cutoff-slider">
+                <span>
+                  Video max rows:{" "}
+                  <input
+                    type="number"
+                    min={1}
+                    max={40}
+                    value={tpVideoMax}
+                    onChange={(e) => setTpVideoMax(Number(e.target.value))}
+                    disabled={busy}
+                    style={{ width: 56 }}
+                    data-agent-id="research-tp-video-max"
+                  />
+                </span>
+              </label>
+            </div>
+          )}
+          {!doCarousel && !doVideo && (
+            <p className="workspace-muted" style={{ marginTop: 8 }}>
+              Both formats off — Start will run insights only, then go straight to creating a research brief.
+            </p>
+          )}
+
+          <button
+            type="button"
+            className="btn-primary"
+            disabled={busy || kinds.length === 0 || poolForAnalysis === 0}
+            onClick={() => void startAnalysis()}
+            data-agent-id="research-start-analysis"
+            style={{ marginTop: 16 }}
+          >
+            {busy
+              ? "Starting…"
+              : doCarousel || doVideo
+                ? `Start research analysis (~${poolForAnalysis})`
+                : `Start insights only (~${poolForAnalysis})`}
+          </button>
+        </div>
+      )}
+
+      {(step === "analyzing" || step === "top_performers") && (
+        <div className="research-chill-card">
+          <p className="research-chill-title">
+            {step === "analyzing"
+              ? "Analyzing every selected post"
+              : "Deep top-performer analysis"}
+          </p>
+          <p className="research-lead">
+            {step === "analyzing"
+              ? "CAF is reading captions and engagement signals platform by platform. When insights finish, the top-performer pass starts automatically with the thresholds you set."
+              : "CAF is inspecting winning carousels and videos so mimic and visual routes have strong references. You don’t need to watch the screen."}
+          </p>
+          <ul className="research-status-log">
+            {statusLines.map((line, i) => (
+              <li key={`${i}-${line.slice(0, 24)}`}>{line}</li>
+            ))}
+            {progressLog.map((line, i) => (
+              <li key={`p-${i}`} className="workspace-muted">
+                {line}
+              </li>
+            ))}
+          </ul>
+          <div className="research-pulse" aria-hidden />
+        </div>
+      )}
+
+      {step === "done" && (
+        <div className="research-pipeline-step" data-agent-id="research-pipeline-done">
+          <h4>Create research brief</h4>
+          <p className="research-lead">
+            Compile market intelligence from this analysis into a research brief. Create ideas later on Market
+            Intelligence — not here.
+          </p>
+          {error && <p className="workspace-error">{error}</p>}
+          <div className="research-profile-confirm">
+            <p className="research-profile-confirm__title">Processing profile</p>
+            {profileLoading && !profile ? (
+              <p className="workspace-muted">Loading profile defaults…</p>
+            ) : (
+              <p className="workspace-muted">
+                Models: <strong>{profile?.rating_model ?? "gpt-4o-mini"}</strong> (rating) ·{" "}
+                <strong>{profile?.synth_model ?? "gpt-4o-mini"}</strong> (synth). Min pack score:{" "}
+                {(profile?.min_llm_score_for_pack ?? 0.35).toFixed(2)}.
+              </p>
+            )}
+          </div>
+          {!builtPackId ? (
             <button
               type="button"
               className="btn-primary"
-              disabled={busy}
-              onClick={() => void runTopPerformers()}
-              data-agent-id="research-run-tp"
+              disabled={busy || !importId}
+              onClick={() => void createResearchBrief()}
+              data-agent-id="research-create-brief"
+              style={{ marginTop: 12 }}
             >
-              {busy ? "Analyzing…" : "Run deep analysis"}
+              {busy ? "Creating brief…" : "Create research brief"}
             </button>
-            <button
-              type="button"
-              className="btn-ghost"
-              disabled={busy}
-              onClick={() => setStep("done")}
-            >
-              Skip for now
-            </button>
-          </div>
+          ) : (
+            <div className="research-chill-card research-chill-card--done" style={{ marginTop: 12 }}>
+              <p className="research-chill-title">Research brief ready</p>
+              <p className="research-lead">
+                Pack <code className="mono">{builtPackId}</code>. Open Market Intelligence to explore patterns and
+                create ideas for this brief.
+              </p>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <Link
+                  className="btn-primary"
+                  href={`/brand/${encodeURIComponent(slug)}/intelligence?packId=${encodeURIComponent(builtPackId)}`}
+                  data-agent-id="research-goto-intelligence"
+                >
+                  Open Market Intelligence →
+                </Link>
+              </div>
+            </div>
+          )}
           {(statusLines.length > 0 || progressLog.length > 0) && (
-            <ul className="research-status-log">
+            <ul className="research-status-log" style={{ marginTop: 12 }}>
               {statusLines.map((line, i) => (
-                <li key={`s-${i}`}>{line}</li>
+                <li key={`done-s-${i}`}>{line}</li>
               ))}
               {progressLog.map((line, i) => (
-                <li key={`p-${i}`} className="workspace-muted">
+                <li key={`done-p-${i}`} className="workspace-muted">
                   {line}
                 </li>
               ))}
             </ul>
           )}
           {busy && <div className="research-pulse" aria-hidden />}
-        </div>
-      )}
-
-      {step === "done" && (
-        <div className="research-chill-card research-chill-card--done">
-          <p className="research-chill-title">Ready for Intelligence</p>
-          <p className="research-lead">
-            Broad insights are in. Open Intelligence to browse patterns, then generate ideas for your enabled
-            content routes.
-          </p>
-          <Link className="btn-primary" href={`/brand/${encodeURIComponent(slug)}/intelligence`}>
-            Open Intelligence →
-          </Link>
         </div>
       )}
     </section>

@@ -1,3 +1,4 @@
+import { brandAccessDeniedResponse } from "@/lib/brand-access-guard";
 import { NextResponse } from "next/server";
 import { getHeygenCatalog } from "@/lib/caf-core-client";
 
@@ -7,6 +8,11 @@ type Ctx = { params: Promise<{ slug: string }> };
 
 export async function GET(_req: Request, ctx: Ctx) {
   const { slug } = await ctx.params;
+  {
+    const denied = await brandAccessDeniedResponse(slug);
+    if (denied) return denied;
+  }
+
   if (!slug) return NextResponse.json({ error: "Missing brand" }, { status: 400 });
 
   const data = await getHeygenCatalog(slug).catch(() => null);

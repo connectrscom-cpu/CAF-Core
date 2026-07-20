@@ -30,7 +30,7 @@ export const VIDEO_LANE_OPTIONS: ReadonlyArray<{
     id: "hook_first",
     label: "Hook-first hybrid",
     flowTypeRaw: "FLOW_VID_HOOK_FIRST",
-    description: "Cinematic AI hook clip (4–8s) + HeyGen body — stitched in CAF.",
+    description: "Cinematic AI hook (matching presenter voice) + avatar Video Agent body with B-roll.",
   },
   {
     id: "ugc",

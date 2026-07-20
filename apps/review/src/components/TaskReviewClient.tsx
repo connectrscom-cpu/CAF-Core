@@ -53,6 +53,7 @@ import {
 import { carouselRegenerateUiState } from "@/lib/carousel-regenerate-status";
 import { resolveSlideRenderStatuses } from "@/lib/slide-render-status";
 import { RenderFailureBanner } from "@/components/RenderFailureBanner";
+import { JobHealthBanner } from "@/components/JobHealthBanner";
 import {
   registerReviewBackgroundJob,
   REVIEW_JOB_COMPLETED_EVENT,
@@ -68,7 +69,14 @@ import {
   resolveMimicTemplateBgEditorFieldsForSlide,
 } from "@/lib/mimic-template-bg";
 import { buildMimicReprintSlideCopyOverrides } from "@/lib/mimic-reprint-slide-copy";
-import { resolveBrandLogoDisplayUrl, resolveBrandLogoReprintUrl, resolveBrandSlideFrames, type BrandSlideFrameOption } from "@/lib/brand-asset-url";
+import {
+  normalizeBrandLogoPosition,
+  resolveBrandSlideFrames,
+  resolveBrandSlideLogos,
+  type BrandLogoPosition,
+  type BrandSlideFrameOption,
+  type BrandSlideLogoOption,
+} from "@/lib/brand-asset-url";
 
 function hashtagsInitialFromRow(data: ReviewQueueRow): string {
   const override = (data.final_hashtags_override ?? "").trim();
@@ -171,9 +179,13 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   const [carouselPaperHex, setCarouselPaperHex] = useState("");
   const [carouselInkHex, setCarouselInkHex] = useState("");
   const [carouselLogoEnabled, setCarouselLogoEnabled] = useState(false);
+  const [carouselLogoAssetId, setCarouselLogoAssetId] = useState("");
+  const [carouselLogoPosition, setCarouselLogoPosition] = useState<BrandLogoPosition>("br");
   const [carouselFrameEnabled, setCarouselFrameEnabled] = useState(false);
   const [carouselFrameAssetId, setCarouselFrameAssetId] = useState("");
   const [videoLogoEnabled, setVideoLogoEnabled] = useState(false);
+  const [videoLogoAssetId, setVideoLogoAssetId] = useState("");
+  const [videoLogoPosition, setVideoLogoPosition] = useState<BrandLogoPosition>("br");
   const [videoFrameEnabled, setVideoFrameEnabled] = useState(false);
   const [videoFrameAssetId, setVideoFrameAssetId] = useState("");
   const [carouselTypoBaseline, setCarouselTypoBaseline] = useState({
@@ -398,6 +410,21 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     );
   }, [textOverlayReprintFailure, textOverlayReprintBanner, data?.review_status, fullJob?.render_state]);
 
+  const jobHealth = useMemo(() => {
+    const fromJob =
+      fullJob && typeof fullJob === "object" && fullJob.job_health && typeof fullJob.job_health === "object"
+        ? (fullJob.job_health as Record<string, unknown>)
+        : null;
+    const state = String(fromJob?.state ?? data?.health_state ?? "").trim();
+    if (!state || state === "healthy") return null;
+    return {
+      state,
+      reasonCode: String(fromJob?.reason_code ?? data?.health_reason_code ?? "").trim() || null,
+      message: String(fromJob?.human_message ?? data?.health_message ?? "").trim() || null,
+      suggestedAction: String(fromJob?.suggested_action ?? data?.health_action ?? "").trim() || null,
+    };
+  }, [fullJob, data?.health_state, data?.health_reason_code, data?.health_message, data?.health_action]);
+
   const prevTextReprintActiveRef = useRef(false);
   useEffect(() => {
     const wasActive = prevTextReprintActiveRef.current;
@@ -525,15 +552,13 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
 
   // Brand palette swatches + logo for the mimic text editor (1.5).
   const [brandPalette, setBrandPalette] = useState<string[]>([]);
-  const [brandLogoUrl, setBrandLogoUrl] = useState<string>("");
-  const [brandLogoReprintUrl, setBrandLogoReprintUrl] = useState<string>("");
+  const [brandLogos, setBrandLogos] = useState<BrandSlideLogoOption[]>([]);
   const [brandFrames, setBrandFrames] = useState<BrandSlideFrameOption[]>([]);
   useEffect(() => {
     const slug = (data?.project ?? projectFromUrl ?? "").trim();
     if (!slug) {
       setBrandPalette([]);
-      setBrandLogoUrl("");
-      setBrandLogoReprintUrl("");
+      setBrandLogos([]);
       setBrandFrames([]);
       return;
     }
@@ -545,7 +570,12 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
         });
         if (!res.ok) return;
         const json = (await res.json()) as {
-          brand_assets?: Array<{ kind?: string; public_url?: string | null; metadata_json?: Record<string, unknown> }>;
+          brand_assets?: Array<{
+            id?: string;
+            kind?: string;
+            public_url?: string | null;
+            metadata_json?: Record<string, unknown>;
+          }>;
         };
         if (cancelled) return;
         const assets = Array.isArray(json.brand_assets) ? json.brand_assets : [];
@@ -561,25 +591,35 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
           }
         }
         setBrandPalette(colors.slice(0, 12));
-        setBrandLogoUrl(resolveBrandLogoDisplayUrl(slug, assets));
-        setBrandLogoReprintUrl(resolveBrandLogoReprintUrl(slug, assets));
 
+        let resolved: Array<{
+          asset_id?: string;
+          role?: string;
+          label?: string | null;
+          public_url?: string | null;
+        }> = [];
         const bibleRes = await fetch(`/api/brand/${encodeURIComponent(slug)}/brand-bible`, { cache: "no-store" });
-        if (!bibleRes.ok) {
-          setBrandFrames([]);
-          return;
+        if (bibleRes.ok) {
+          const bibleJson = (await bibleRes.json()) as {
+            snapshot?: {
+              resolved_assets?: Array<{
+                asset_id?: string;
+                role?: string;
+                label?: string | null;
+                public_url?: string | null;
+              }>;
+            };
+          };
+          if (cancelled) return;
+          resolved = Array.isArray(bibleJson.snapshot?.resolved_assets) ? bibleJson.snapshot!.resolved_assets! : [];
         }
-        const bibleJson = (await bibleRes.json()) as {
-          snapshot?: { resolved_assets?: Array<{ asset_id?: string; role?: string; label?: string | null; public_url?: string | null }> };
-        };
         if (cancelled) return;
-        const resolved = Array.isArray(bibleJson.snapshot?.resolved_assets) ? bibleJson.snapshot!.resolved_assets! : [];
+        setBrandLogos(resolveBrandSlideLogos(slug, resolved, assets));
         setBrandFrames(resolveBrandSlideFrames(slug, resolved));
       } catch {
         if (!cancelled) {
           setBrandPalette([]);
-          setBrandLogoUrl("");
-          setBrandLogoReprintUrl("");
+          setBrandLogos([]);
           setBrandFrames([]);
         }
       }
@@ -589,19 +629,59 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     };
   }, [data?.project, projectFromUrl]);
 
+  const selectedCarouselLogo = useMemo(
+    () => brandLogos.find((l) => l.assetId === carouselLogoAssetId) ?? brandLogos[0] ?? null,
+    [brandLogos, carouselLogoAssetId]
+  );
+  const selectedVideoLogo = useMemo(
+    () => brandLogos.find((l) => l.assetId === videoLogoAssetId) ?? brandLogos[0] ?? null,
+    [brandLogos, videoLogoAssetId]
+  );
+
   useEffect(() => {
     if (!execTaskId || typeof window === "undefined") return;
     const key = `caf-carousel-logo-stamp:${execTaskId}`;
     const stored = sessionStorage.getItem(key);
     if (stored === "0") setCarouselLogoEnabled(false);
     else if (stored === "1") setCarouselLogoEnabled(true);
-    else setCarouselLogoEnabled(Boolean(brandLogoReprintUrl.trim()));
-  }, [execTaskId, brandLogoReprintUrl]);
+    else setCarouselLogoEnabled(brandLogos.length > 0);
+  }, [execTaskId, brandLogos]);
 
   useEffect(() => {
     if (!execTaskId || typeof window === "undefined") return;
     sessionStorage.setItem(`caf-carousel-logo-stamp:${execTaskId}`, carouselLogoEnabled ? "1" : "0");
   }, [carouselLogoEnabled, execTaskId]);
+
+  useEffect(() => {
+    if (brandLogos.length === 0) {
+      setCarouselLogoAssetId("");
+      return;
+    }
+    setCarouselLogoAssetId((prev) => {
+      if (prev && brandLogos.some((l) => l.assetId === prev)) return prev;
+      if (typeof window !== "undefined" && execTaskId) {
+        const stored = sessionStorage.getItem(`caf-carousel-logo-asset:${execTaskId}`)?.trim() ?? "";
+        if (stored && brandLogos.some((l) => l.assetId === stored)) return stored;
+      }
+      return brandLogos[0]!.assetId;
+    });
+  }, [brandLogos, execTaskId]);
+
+  useEffect(() => {
+    if (!execTaskId || typeof window === "undefined" || !carouselLogoAssetId) return;
+    sessionStorage.setItem(`caf-carousel-logo-asset:${execTaskId}`, carouselLogoAssetId);
+  }, [carouselLogoAssetId, execTaskId]);
+
+  useEffect(() => {
+    if (!execTaskId || typeof window === "undefined") return;
+    const stored = sessionStorage.getItem(`caf-carousel-logo-pos:${execTaskId}`);
+    setCarouselLogoPosition(normalizeBrandLogoPosition(stored));
+  }, [execTaskId]);
+
+  useEffect(() => {
+    if (!execTaskId || typeof window === "undefined") return;
+    sessionStorage.setItem(`caf-carousel-logo-pos:${execTaskId}`, carouselLogoPosition);
+  }, [carouselLogoPosition, execTaskId]);
 
   useEffect(() => {
     if (brandFrames.length === 0) {
@@ -620,13 +700,44 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     const stored = sessionStorage.getItem(key);
     if (stored === "0") setVideoLogoEnabled(false);
     else if (stored === "1") setVideoLogoEnabled(true);
-    else setVideoLogoEnabled(Boolean(brandLogoReprintUrl.trim()));
-  }, [execTaskId, brandLogoReprintUrl]);
+    else setVideoLogoEnabled(brandLogos.length > 0);
+  }, [execTaskId, brandLogos]);
 
   useEffect(() => {
     if (!execTaskId || typeof window === "undefined") return;
     sessionStorage.setItem(`caf-video-logo-stamp:${execTaskId}`, videoLogoEnabled ? "1" : "0");
   }, [videoLogoEnabled, execTaskId]);
+
+  useEffect(() => {
+    if (brandLogos.length === 0) {
+      setVideoLogoAssetId("");
+      return;
+    }
+    setVideoLogoAssetId((prev) => {
+      if (prev && brandLogos.some((l) => l.assetId === prev)) return prev;
+      if (typeof window !== "undefined" && execTaskId) {
+        const stored = sessionStorage.getItem(`caf-video-logo-asset:${execTaskId}`)?.trim() ?? "";
+        if (stored && brandLogos.some((l) => l.assetId === stored)) return stored;
+      }
+      return brandLogos[0]!.assetId;
+    });
+  }, [brandLogos, execTaskId]);
+
+  useEffect(() => {
+    if (!execTaskId || typeof window === "undefined" || !videoLogoAssetId) return;
+    sessionStorage.setItem(`caf-video-logo-asset:${execTaskId}`, videoLogoAssetId);
+  }, [videoLogoAssetId, execTaskId]);
+
+  useEffect(() => {
+    if (!execTaskId || typeof window === "undefined") return;
+    const stored = sessionStorage.getItem(`caf-video-logo-pos:${execTaskId}`);
+    setVideoLogoPosition(normalizeBrandLogoPosition(stored));
+  }, [execTaskId]);
+
+  useEffect(() => {
+    if (!execTaskId || typeof window === "undefined") return;
+    sessionStorage.setItem(`caf-video-logo-pos:${execTaskId}`, videoLogoPosition);
+  }, [videoLogoPosition, execTaskId]);
 
   useEffect(() => {
     if (brandFrames.length === 0) {
@@ -1107,9 +1218,13 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   );
 
   const carouselLogoOverlay = useMemo(() => {
-    if (!carouselLogoEnabled || !brandLogoReprintUrl.trim()) return undefined;
-    return { url: brandLogoReprintUrl.trim(), position: "br" as const };
-  }, [carouselLogoEnabled, brandLogoReprintUrl]);
+    if (!carouselLogoEnabled || !selectedCarouselLogo?.reprintUrl?.trim()) return undefined;
+    return {
+      url: selectedCarouselLogo.reprintUrl.trim(),
+      position: carouselLogoPosition,
+      asset_id: selectedCarouselLogo.assetId,
+    };
+  }, [carouselLogoEnabled, selectedCarouselLogo, carouselLogoPosition]);
 
   const carouselFrameOverlay = useMemo(() => {
     if (!carouselFrameEnabled || brandFrames.length === 0) return undefined;
@@ -1130,6 +1245,8 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
         carouselPaperHex,
         carouselInkHex,
         carouselLogoEnabled,
+        carouselLogoAssetId,
+        carouselLogoPosition,
         carouselFrameEnabled,
         carouselFrameAssetId,
       }),
@@ -1143,6 +1260,8 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
       carouselPaperHex,
       carouselInkHex,
       carouselLogoEnabled,
+      carouselLogoAssetId,
+      carouselLogoPosition,
       carouselFrameEnabled,
       carouselFrameAssetId,
     ]
@@ -1153,22 +1272,40 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
 
   const videoBrandOverlayPreview = useMemo(() => {
     const logoUrl =
-      videoLogoEnabled && brandLogoUrl.trim() ? brandLogoUrl.trim() : undefined;
+      videoLogoEnabled && selectedVideoLogo?.displayUrl?.trim()
+        ? selectedVideoLogo.displayUrl.trim()
+        : undefined;
     if (!videoFrameEnabled || brandFrames.length === 0) {
-      return { logoUrl, frameUrl: undefined as string | undefined };
+      return {
+        logoUrl,
+        logoPosition: videoLogoPosition,
+        frameUrl: undefined as string | undefined,
+      };
     }
     const frame = brandFrames.find((f) => f.assetId === videoFrameAssetId) ?? brandFrames[0];
     const frameUrl = frame?.displayUrl?.trim() || undefined;
-    return { logoUrl, frameUrl };
-  }, [videoLogoEnabled, brandLogoUrl, videoFrameEnabled, videoFrameAssetId, brandFrames]);
+    return { logoUrl, logoPosition: videoLogoPosition, frameUrl };
+  }, [
+    videoLogoEnabled,
+    selectedVideoLogo,
+    videoLogoPosition,
+    videoFrameEnabled,
+    videoFrameAssetId,
+    brandFrames,
+  ]);
 
   const videoPreviewSidePanel = videoFlow ? (
     <VideoBrandStampControls
       taskId={execTaskId}
       projectSlug={(data?.project ?? projectFromUrl).trim()}
-      brandLogoDisplayUrl={brandLogoUrl}
+      brandLogos={brandLogos}
+      brandLogoDisplayUrl={selectedVideoLogo?.displayUrl ?? ""}
       logoEnabled={videoLogoEnabled}
       onLogoEnabledChange={setVideoLogoEnabled}
+      selectedLogoAssetId={videoLogoAssetId}
+      onSelectedLogoAssetIdChange={setVideoLogoAssetId}
+      logoPosition={videoLogoPosition}
+      onLogoPositionChange={setVideoLogoPosition}
       brandFrames={brandFrames}
       frameEnabled={videoFrameEnabled}
       onFrameEnabledChange={setVideoFrameEnabled}
@@ -1196,9 +1333,14 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
       carouselHandleFontPx={carouselHandleFontPx}
       onCarouselHandleFontPxChange={setCarouselHandleFontPx}
       brandPalette={brandPalette}
-      brandLogoDisplayUrl={brandLogoUrl}
+      brandLogos={brandLogos}
+      brandLogoDisplayUrl={selectedCarouselLogo?.displayUrl ?? ""}
       logoEnabled={carouselLogoEnabled}
       onLogoEnabledChange={setCarouselLogoEnabled}
+      selectedLogoAssetId={carouselLogoAssetId}
+      onSelectedLogoAssetIdChange={setCarouselLogoAssetId}
+      logoPosition={carouselLogoPosition}
+      onLogoPositionChange={setCarouselLogoPosition}
       brandFrames={brandFrames}
       frameEnabled={carouselFrameEnabled}
       onFrameEnabledChange={setCarouselFrameEnabled}
@@ -1527,10 +1669,18 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
       )}
 
       {error && (
-        <div style={{ margin: "0 28px 16px", padding: 12, background: "var(--red-bg)", color: "var(--red)", borderRadius: 8, fontSize: 13 }}>
+        <div className="detail-alert" role="alert">
           {error}
         </div>
       )}
+      {jobHealth ? (
+        <JobHealthBanner
+          state={jobHealth.state}
+          reasonCode={jobHealth.reasonCode}
+          message={jobHealth.message}
+          suggestedAction={jobHealth.suggestedAction}
+        />
+      ) : null}
       {textOverlayReprintFailure ? (
         <RenderFailureBanner
           headline={textOverlayReprintFailure.headline}
@@ -1546,7 +1696,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
         >
           {textOverlayReprintBanner}
         </div>
-      ) : jobFailureBanner ? (
+      ) : !jobHealth && jobFailureBanner ? (
         <RenderFailureBanner
           technical={jobFailureBanner.replace(/^Job failed:\s*/i, "")}
           kind="job"
@@ -1641,8 +1791,9 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                     templateBgFieldTexts={templateBgFieldTexts}
                     fullBleedSlotTexts={fullBleedSlotTexts}
                     brandPalette={brandPalette}
-                    brandLogoUrl={brandLogoUrl}
-                    brandLogoReprintUrl={brandLogoReprintUrl}
+                    brandLogos={brandLogos}
+                    brandLogoUrl={selectedCarouselLogo?.displayUrl ?? ""}
+                    brandLogoReprintUrl={selectedCarouselLogo?.reprintUrl ?? ""}
                     brandFrames={brandFrames}
                     resolveSlideFieldText={(slideIndex, fieldRole) => {
                       const slide = editedSlides[slideIndex - 1];
@@ -1840,12 +1991,17 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                 onInkHexChange={setCarouselInkHex}
                 logoEnabled={carouselLogoEnabled}
                 onLogoEnabledChange={setCarouselLogoEnabled}
+                selectedLogoAssetId={carouselLogoAssetId}
+                onSelectedLogoAssetIdChange={setCarouselLogoAssetId}
+                logoPosition={carouselLogoPosition}
+                onLogoPositionChange={setCarouselLogoPosition}
                 frameEnabled={carouselFrameEnabled}
                 onFrameEnabledChange={setCarouselFrameEnabled}
                 selectedFrameAssetId={carouselFrameAssetId}
                 onSelectedFrameAssetIdChange={setCarouselFrameAssetId}
                 brandPalette={brandPalette}
-                brandLogoDisplayUrl={brandLogoUrl}
+                brandLogos={brandLogos}
+                brandLogoDisplayUrl={selectedCarouselLogo?.displayUrl ?? ""}
                 brandFrames={brandFrames}
                 stylingInPreviewPanel={textCarouselStylingPanel}
                 finalTitleOverride={editedTitle}

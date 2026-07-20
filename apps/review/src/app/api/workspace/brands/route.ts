@@ -9,6 +9,12 @@ import {
   listPublicationPlacements,
   listSignalPacksForProject,
 } from "@/lib/caf-core-client";
+import {
+  coreAuthFetch,
+  fetchAuthMe,
+  fetchAuthStatus,
+  getSessionTokenFromCookies,
+} from "@/lib/account-access";
 import { toBrandSummary, toLiteBrandSummary } from "@/lib/marketer/brand-adapters";
 import { filterMarketerBrands } from "@/lib/marketer/project-filters";
 import type { BrandSummary } from "@/lib/marketer/types";
@@ -57,13 +63,31 @@ async function summarizeBrand(
 
 export async function GET(req: NextRequest) {
   const multi = reviewUsesAllProjects();
+  const authStatus = await fetchAuthStatus().catch(() => ({
+    auth_enforced: false,
+    signup_enabled: true,
+  }));
+  const me = await fetchAuthMe().catch(() => null);
+
+  if (authStatus.auth_enforced && !me?.user) {
+    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+  }
+
   const catalog = await listProjects();
-  const projects = filterMarketerBrands((catalog?.projects ?? []).filter((p) => p.active));
+  let projects = filterMarketerBrands((catalog?.projects ?? []).filter((p) => p.active));
+
+  // Logged-in users only see brands their account membership allows (Connectrs owner = all Connectrs brands).
+  if (me?.user) {
+    const allowed = new Set(me.project_slugs ?? []);
+    projects = projects.filter((p) => allowed.has(p.slug));
+  } else if (authStatus.auth_enforced) {
+    projects = [];
+  }
 
   let slugs = projects.map((p) => p.slug);
   if (!multi && PROJECT_SLUG.trim()) {
     slugs = slugs.filter((s) => s === PROJECT_SLUG.trim());
-    if (slugs.length === 0) slugs = [PROJECT_SLUG.trim()];
+    if (slugs.length === 0 && !authStatus.auth_enforced) slugs = [PROJECT_SLUG.trim()];
   }
 
   const scoped = projects.filter((p) => slugs.includes(p.slug));
@@ -82,6 +106,11 @@ export async function GET(req: NextRequest) {
     multiProject: multi,
     lite,
     brands,
+    auth: {
+      enforced: authStatus.auth_enforced,
+      authenticated: !!me?.user,
+      accounts: me?.accounts ?? [],
+    },
   });
 }
 
@@ -102,6 +131,7 @@ export async function POST(req: NextRequest) {
     color?: string;
     enabledContentRoutes?: string[];
     onboardingPack?: string;
+    accountSlug?: string;
   };
 
   const displayName = (body.displayName ?? "").trim();
@@ -115,6 +145,74 @@ export async function POST(req: NextRequest) {
 
   const color =
     typeof body.color === "string" && /^#[0-9A-Fa-f]{6}$/.test(body.color) ? body.color : undefined;
+
+  const authStatus = await fetchAuthStatus().catch(() => ({
+    auth_enforced: false,
+    signup_enabled: true,
+  }));
+  const me = await fetchAuthMe().catch(() => null);
+  if (authStatus.auth_enforced && !me?.user) {
+    return NextResponse.json({ ok: false, error: "unauthorized", message: "Sign in to create a brand." }, { status: 401 });
+  }
+
+  const adminAccounts = (me?.accounts ?? []).filter((a) => a.role === "owner" || a.role === "admin");
+  const accountSlug =
+    (body.accountSlug ?? "").trim() ||
+    adminAccounts[0]?.slug ||
+    "";
+
+  // Prefer account-scoped create so caps + Connectrs ownership stay correct.
+  if (accountSlug && me?.user) {
+    const token = await getSessionTokenFromCookies();
+    const pack = typeof body.onboardingPack === "string" ? body.onboardingPack.trim() : "";
+    if (pack.length > 40) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "pack_via_account_unsupported",
+          message: "Import onboarding pack from an unscoped create, or create the brand first then import.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const { status, json } = await coreAuthFetch<{
+      ok?: boolean;
+      error?: string;
+      max_projects?: number;
+      project?: { slug: string; display_name: string | null; color?: string | null };
+    }>(`/v1/accounts/${encodeURIComponent(accountSlug)}/projects`, {
+      method: "POST",
+      sessionToken: token,
+      body: {
+        slug,
+        display_name: displayName || slug,
+        color,
+        enabled_content_routes: body.enabledContentRoutes,
+        apply_default_content_routes: !body.enabledContentRoutes?.length,
+      },
+    });
+
+    if (status >= 400 || !json.ok || !json.project) {
+      const message =
+        json.error === "project_cap_reached"
+          ? `Account project limit reached (${json.max_projects ?? "cap"}).`
+          : json.error === "forbidden"
+            ? "You need owner/admin access on the account to create brands."
+            : "Could not create brand under your account.";
+      return NextResponse.json({ ok: false, error: json.error ?? "create_failed", message }, { status });
+    }
+
+    return NextResponse.json({
+      ok: true,
+      created: true,
+      brand: {
+        slug: json.project.slug,
+        displayName: json.project.display_name ?? json.project.slug,
+        color: json.project.color ?? color ?? null,
+      },
+    });
+  }
 
   const pack = typeof body.onboardingPack === "string" ? body.onboardingPack.trim() : "";
   if (pack.length > 40) {

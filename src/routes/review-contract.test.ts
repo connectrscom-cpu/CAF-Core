@@ -51,6 +51,8 @@ const REVIEW_CRITICAL_PATHS: string[] = [
   "/v1/projects/:project_slug/project-risk-rules",
   "/v1/projects/:project_slug/risk-qc-status",
   "/v1/learning/:project_slug/rules",
+  "/v1/learning/:project_slug/marketer-summary",
+  "/v1/metrics/pull/:project_slug",
   "/v1/learning/:project_slug/rules/:rule_id/dismiss",
   "/v1/learning/:project_slug/rules/dismiss-pending",
   "/v1/learning/:project_slug/context-preview",
@@ -64,6 +66,17 @@ const REVIEW_CRITICAL_PATHS: string[] = [
   "/v1/inputs-sources/workbook-template",
   "/v1/signal-packs/:project_slug",
   "/v1/signal-packs/:project_slug/:id",
+  "/v1/auth/status",
+  "/v1/auth/login",
+  "/v1/auth/logout",
+  "/v1/auth/me",
+  "/v1/auth/signup",
+  "/v1/auth/accept-invite",
+  "/v1/auth/invites/:token",
+  "/v1/auth/access/:project_slug",
+  "/v1/accounts/:account_slug",
+  "/v1/accounts/:account_slug/invites",
+  "/v1/accounts/:account_slug/projects",
 ];
 
 describe("Review app contract (static)", () => {

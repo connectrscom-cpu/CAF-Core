@@ -18,6 +18,11 @@ import {
 } from "../domain/mimic-docai-layer-positions.js";
 import { insertLearningRule, applyLearningRule, listLearningRules } from "../repositories/learning.js";
 import { insertObservation } from "../repositories/learning-evidence.js";
+import {
+  recordEditorialEditDiffObservation,
+  recordReprintObservation,
+} from "../services/learning-edit-evidence.js";
+import { pullMetaMetricsForProject } from "../services/meta-metrics-pull.js";
 import { insertJobStateTransition } from "../repositories/transitions.js";
 import { randomUUID } from "node:crypto";
 import {
@@ -39,6 +44,7 @@ import {
   listProductBibleVersions,
 } from "../repositories/product-bibles.js";
 import { listProjectBrandAssets } from "../repositories/project-config.js";
+import { brandAssetRenderFileUrl } from "../services/bvs-render-overlays.js";
 import { signProjectBrandAssetsForClient } from "../services/brand-asset-display-urls.js";
 import {
   insertDiagnosticAudit,
@@ -68,6 +74,7 @@ import {
   type ReviewQueueFilters,
 } from "../repositories/review-queue.js";
 import { enrichJobFlowDisplay } from "../services/review-queue-display.js";
+import { deriveJobHealth, type JobHealth } from "../domain/job-health.js";
 import { readinessState } from "../services/readiness-state.js";
 import { probeReviewSidecar } from "../services/review-next-server.js";
 import {
@@ -228,6 +235,19 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
       validator: body.validator ?? null,
       submit: true,
     });
+
+    // Learning evidence: capture what the human actually changed (before→after).
+    void recordEditorialEditDiffObservation(db, {
+      project_id: project.id,
+      task_id,
+      flow_type: flowType || null,
+      platform: jobRow ? ((jobRow.platform as string | null) ?? null) : null,
+      decision: body.decision,
+      validator: body.validator ?? null,
+      submitted: true,
+      generated_output: pickGeneratedOutputOrEmpty(gp),
+      overrides: overridesMerged,
+    }).catch(() => {});
 
     /**
      * Immediate generation guidance from NEEDS_EDIT feedback.
@@ -495,12 +515,37 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     return out;
   }
 
+  function attachJobHealth<
+    T extends {
+      status?: string | null;
+      flow_type?: string | null;
+      generation_payload?: Record<string, unknown> | null;
+      render_state?: unknown;
+      updated_at?: string | Date | null;
+    },
+  >(job: T): T & { job_health: JobHealth } {
+    return {
+      ...job,
+      job_health: deriveJobHealth({
+        status: job.status,
+        flow_type: job.flow_type,
+        generation_payload: job.generation_payload ?? null,
+        render_state: job.render_state,
+        updated_at: job.updated_at,
+        mimic_image_enabled: config.MIMIC_IMAGE_ENABLED,
+      }),
+    };
+  }
+
   async function withSignedReviewJob<
     T extends {
       flow_type: string | null;
+      status?: string | null;
       project_id?: string;
       task_id?: string;
       generation_payload?: Record<string, unknown> | null | undefined;
+      render_state?: unknown;
+      updated_at?: string | Date | null;
     },
   >(
     detail: T
@@ -510,6 +555,7 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
       flow_detail: string | null;
       is_mimic_replication: boolean;
       top_performer_reference: TopPerformerReviewReference | null;
+      job_health: JobHealth;
     }
   > {
     const signed = await withSignedGenerationPayload(detail);
@@ -542,7 +588,7 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
         };
       }
     }
-    return { ...enriched, top_performer_reference };
+    return attachJobHealth({ ...enriched, top_performer_reference });
   }
 
   async function withSignedGenerationPayload<
@@ -861,6 +907,29 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
       validator: parsed.data.validator ?? null,
       submit: parsed.data.submit ?? false,
     });
+
+    // Learning evidence: silent saves (submit=false) carry edits too.
+    const savedOverrides = parsed.data.overrides_json ?? {};
+    if (Object.keys(savedOverrides).length > 0) {
+      const reviewData = parsed.data;
+      void (async () => {
+        const job = await getContentJobByTaskId(db, project.id, reviewData.task_id.trim());
+        if (!job) return;
+        await recordEditorialEditDiffObservation(db, {
+          project_id: project.id,
+          task_id: reviewData.task_id.trim(),
+          flow_type: (job.flow_type as string | null) ?? null,
+          platform: (job.platform as string | null) ?? null,
+          decision: reviewData.decision ?? null,
+          validator: reviewData.validator ?? null,
+          submitted: reviewData.submit ?? false,
+          generated_output: pickGeneratedOutputOrEmpty(
+            (job.generation_payload ?? {}) as Record<string, unknown>
+          ),
+          overrides: savedOverrides,
+        });
+      })().catch(() => {});
+    }
     return { ok: true };
   });
 
@@ -906,6 +975,15 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
       raw_json: parsed.data.raw_json ?? {},
     });
     return { ok: true };
+  });
+
+  /** Manual trigger for the Meta Graph insights auto-pull (same code path as the cron). */
+  app.post("/v1/metrics/pull/:project_slug", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const project = await ensureProject(db, params.data.project_slug);
+    const result = await pullMetaMetricsForProject(db, config, project.id, request.log);
+    return { ok: true, ...result };
   });
 
   const autoValSchema = z.object({
@@ -1164,15 +1242,25 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     return { limit, offset, slim };
   }
 
-  async function signEnrichedQueueJobs<T extends { preview_thumb_url?: string | null }>(
+  async function signEnrichedQueueJobs<
+    T extends {
+      preview_thumb_url?: string | null;
+      status?: string | null;
+      flow_type?: string | null;
+      generation_payload?: Record<string, unknown> | null;
+      render_state?: unknown;
+      updated_at?: string | Date | null;
+    },
+  >(
     jobs: T[],
     enrich: (j: T) => T & { flow_label: string; flow_detail: string | null; is_mimic_replication: boolean }
   ) {
     return Promise.all(
       jobs.map(async (j) => {
         const enriched = enrich(j);
+        const withHealth = attachJobHealth(enriched);
         return {
-          ...enriched,
+          ...withHealth,
           preview_thumb_url: await maybeSignPublicAssetUrl(
             (j as { preview_thumb_url?: string | null }).preview_thumb_url ?? null
           ),
@@ -1425,8 +1513,12 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     text_backing_color: z.string().min(1).max(64).optional(),
     logo_overlay: z
       .object({
-        url: z.string().min(1).max(2048),
+        url: z.string().min(1).max(2048).optional(),
         position: z.string().max(8).optional(),
+        asset_id: z.string().min(1).max(120).optional(),
+      })
+      .refine((v) => Boolean(v.url?.trim() || v.asset_id?.trim()), {
+        message: "logo_overlay requires url or asset_id",
       })
       .optional(),
     frame_overlay: z
@@ -1456,7 +1548,7 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     textBacking: boolean | undefined,
     textBackingColor: string | undefined,
     docaiLayerPositions: Record<string, MimicDocAiLayerPositionOverride[]> | undefined,
-    logoOverlay: { url: string; position?: string } | undefined,
+    logoOverlay: { url?: string; position?: string; asset_id?: string } | undefined,
     frameOverlay: { url?: string; asset_id?: string } | undefined,
     explicitSlideCopyOverrides: Array<{ slide_index: number; llm_slide: Record<string, unknown> }> | undefined,
     log: { info: (o: unknown, msg?: string) => void; error: (o: unknown, msg?: string) => void }
@@ -1476,6 +1568,17 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     }
     const jobId = String(job.id ?? "");
     if (!jobId) return { ok: false, error: "job_missing_id" };
+
+    let resolvedLogoUrl = logoOverlay?.url?.trim() ?? "";
+    const logoAssetId = logoOverlay?.asset_id?.trim() ?? "";
+    if (!resolvedLogoUrl && logoAssetId) {
+      resolvedLogoUrl = brandAssetRenderFileUrl(config, projectSlug, logoAssetId);
+    }
+    let resolvedFrameUrl = frameOverlay?.url?.trim() ?? "";
+    const frameAssetId = frameOverlay?.asset_id?.trim() ?? "";
+    if (!resolvedFrameUrl && frameAssetId) {
+      resolvedFrameUrl = brandAssetRenderFileUrl(config, projectSlug, frameAssetId);
+    }
 
     let slideCopyOverrides: Array<{ slide_index: number; llm_slide: Record<string, unknown> }> = [];
     if (docaiLayerPositions && Object.keys(docaiLayerPositions).length > 0) {
@@ -1530,14 +1633,14 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
         : {}),
       textBacking: textBacking !== false,
       ...(textBackingColor?.trim() ? { textBackingColor: textBackingColor.trim() } : {}),
-      ...(logoOverlay?.url?.trim()
-        ? { logoOverlay: { url: logoOverlay.url.trim(), position: logoOverlay.position?.trim() || "br" } }
+      ...(resolvedLogoUrl
+        ? { logoOverlay: { url: resolvedLogoUrl, position: logoOverlay?.position?.trim() || "br" } }
         : {}),
-      ...(frameOverlay?.url?.trim()
+      ...(resolvedFrameUrl
         ? {
             frameOverlay: {
-              url: frameOverlay.url.trim(),
-              ...(frameOverlay.asset_id?.trim() ? { asset_id: frameOverlay.asset_id.trim() } : {}),
+              url: resolvedFrameUrl,
+              ...(frameAssetId ? { asset_id: frameAssetId } : {}),
             },
           }
         : {}),
@@ -1569,6 +1672,24 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
           log.error({ err: markErr, task_id: taskId }, "failed to mark text overlay reprint as FAILED");
         }
       });
+
+    // Learning evidence: reprints signal layout/typography dissatisfaction
+    // that never surfaces as a review decision.
+    const adjustments: string[] = [];
+    if (renderTypography && Object.keys(renderTypography).length > 0) adjustments.push("typography");
+    if (docaiLayerPositions && Object.keys(docaiLayerPositions).length > 0) adjustments.push("layer_positions");
+    if (slideCopyOverrides.length > 0) adjustments.push("slide_copy");
+    if (textBacking !== undefined || textBackingColor?.trim()) adjustments.push("text_backing");
+    if (resolvedLogoUrl) adjustments.push("logo_overlay");
+    if (resolvedFrameUrl || frameAssetId) adjustments.push("frame_overlay");
+    void recordReprintObservation(db, {
+      project_id: project.id,
+      task_id: taskId.trim(),
+      flow_type: flowType || null,
+      platform: (job.platform as string | null) ?? null,
+      slide_indices: slideIndices ?? null,
+      adjustments,
+    }).catch(() => {});
 
     const slideHint =
       slideIndices && slideIndices.length > 0
@@ -1651,6 +1772,10 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
       .object({
         url: z.string().min(1).max(2048).optional(),
         position: z.string().max(8).optional(),
+        asset_id: z.string().min(1).max(120).optional(),
+      })
+      .refine((v) => Boolean(v.url?.trim() || v.asset_id?.trim()), {
+        message: "logo_overlay requires url or asset_id",
       })
       .optional(),
     frame_overlay: z
@@ -1664,7 +1789,7 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
   async function scheduleReprintVideoBrandOverlays(
     projectSlug: string,
     taskId: string,
-    logoOverlay: { url?: string; position?: string } | undefined,
+    logoOverlay: { url?: string; position?: string; asset_id?: string } | undefined,
     frameOverlay: { url?: string; asset_id?: string } | undefined,
     log: { info: (o: unknown, msg?: string) => void; error: (o: unknown, msg?: string) => void }
   ): Promise<
@@ -1677,15 +1802,23 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     if (!isVideoFlow(String(job.flow_type ?? ""))) {
       return { ok: false, error: "video_brand_overlay_requires_video_job" };
     }
-    const logoUrl = logoOverlay?.url?.trim() ?? "";
-    const frameUrl = frameOverlay?.url?.trim() ?? "";
+    let logoUrl = logoOverlay?.url?.trim() ?? "";
+    const logoAssetId = logoOverlay?.asset_id?.trim() ?? "";
+    if (!logoUrl && logoAssetId) {
+      logoUrl = brandAssetRenderFileUrl(config, projectSlug, logoAssetId);
+    }
+    let frameUrl = frameOverlay?.url?.trim() ?? "";
+    const frameAssetId = frameOverlay?.asset_id?.trim() ?? "";
+    if (!frameUrl && frameAssetId) {
+      frameUrl = brandAssetRenderFileUrl(config, projectSlug, frameAssetId);
+    }
     return scheduleVideoBrandOverlayReprint(db, config, projectSlug, taskId.trim(), {
       ...(logoUrl ? { logoOverlay: { url: logoUrl, position: logoOverlay?.position?.trim() || "br" } } : {}),
       ...(frameUrl
         ? {
             frameOverlay: {
               url: frameUrl,
-              ...(frameOverlay?.asset_id?.trim() ? { asset_id: frameOverlay.asset_id.trim() } : {}),
+              ...(frameAssetId ? { asset_id: frameAssetId } : {}),
             },
           }
         : {}),

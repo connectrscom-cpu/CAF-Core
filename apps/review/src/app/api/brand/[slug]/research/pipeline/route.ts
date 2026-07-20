@@ -1,7 +1,10 @@
+import { brandAccessDeniedResponse } from "@/lib/brand-access-guard";
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import {
+  buildSignalPackFromImport,
   getImportEvidenceStats,
+  getInputsProcessingProfile,
   getPreLlmEvidencePreview,
   getProcessingPassProgress,
   runBroadInsightsForImport,
@@ -25,6 +28,11 @@ const SOCIAL_KINDS = [
 
 export async function GET(req: NextRequest, ctx: Ctx) {
   const { slug } = await ctx.params;
+  {
+    const denied = await brandAccessDeniedResponse(slug);
+    if (denied) return denied;
+  }
+
   if (!slug) return NextResponse.json({ error: "Missing brand" }, { status: 400 });
 
   const action = req.nextUrl.searchParams.get("action");
@@ -49,11 +57,34 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     });
   }
 
+  if (action === "profile") {
+    try {
+      const res = await getInputsProcessingProfile(slug);
+      return NextResponse.json({
+        ok: true,
+        profile: {
+          rating_model: res.profile.rating_model,
+          synth_model: res.profile.synth_model,
+          max_ideas_in_signal_pack: res.profile.max_ideas_in_signal_pack,
+          max_rows_for_rating: res.profile.max_rows_for_rating,
+          min_llm_score_for_pack: Number(res.profile.min_llm_score_for_pack) || 0.35,
+        },
+      });
+    } catch {
+      return NextResponse.json({ ok: false, message: "Could not load processing profile" }, { status: 502 });
+    }
+  }
+
   return NextResponse.json({ ok: false, error: "bad_query" }, { status: 400 });
 }
 
 export async function POST(req: NextRequest, ctx: Ctx) {
   const { slug } = await ctx.params;
+  {
+    const denied = await brandAccessDeniedResponse(slug);
+    if (denied) return denied;
+  }
+
   if (!slug) return NextResponse.json({ error: "Missing brand" }, { status: 400 });
 
   const body = (await req.json()) as {
@@ -64,6 +95,9 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     max_rows?: number;
     cutoffs?: Record<string, number>;
     rating_top_fraction?: number;
+    run_name?: string;
+    notes?: string;
+    target_idea_count?: number;
   };
 
   const importId = String(body.importId ?? "").trim();
@@ -194,6 +228,42 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     return NextResponse.json({
       ok: true,
       qualifying: result.qualifying_video_rows ?? result.rows_sent,
+    });
+  }
+
+  if (body.action === "build_signal_pack") {
+    // Brief only — market intelligence from insights. Ideas are created on Market Intelligence.
+    const packResult = await buildSignalPackFromImport(slug, importId, {
+      brief_only: true,
+      run_name: body.run_name?.trim() || undefined,
+      notes:
+        body.notes?.trim() ||
+        `Marketer research brief from import ${importId.slice(0, 8)}`,
+    }).catch((e) => ({ ok: false as const, message: String(e) }));
+
+    if (!packResult || !("ok" in packResult) || !packResult.ok || !packResult.signal_pack_id) {
+      return NextResponse.json(
+        {
+          ok: false,
+          step: "build_signal_pack",
+          message:
+            (packResult && "message" in packResult && packResult.message
+              ? String(packResult.message)
+              : null) ||
+            "Could not compile the research brief from insights.",
+          next_action: "Retry Create research brief, or re-run research analysis if insights are missing.",
+        },
+        { status: 502 }
+      );
+    }
+
+    return NextResponse.json({
+      ok: true,
+      signal_pack_id: packResult.signal_pack_id,
+      ideas_count: 0,
+      mode: "brief_only",
+      message:
+        "Research brief ready. Open Market Intelligence to explore patterns, then create ideas there.",
     });
   }
 

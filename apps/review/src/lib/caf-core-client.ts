@@ -204,6 +204,17 @@ export interface ReviewQueueJob {
   is_mimic_replication?: boolean;
   render_state?: Record<string, unknown> | null;
   top_performer_reference?: TopPerformerReviewReference | null;
+  /** Read-only health derivation from Core (`job-health.ts`). */
+  job_health?: JobHealthSummary | null;
+}
+
+/** Compact operator-facing health from Core `deriveJobHealth`. */
+export interface JobHealthSummary {
+  state: "healthy" | "blocked" | "failed" | "stuck" | "waiting_on_provider";
+  reason_code: string;
+  human_message: string;
+  suggested_action: string;
+  action_hint?: string;
 }
 
 export interface TopPerformerReviewReference {
@@ -527,7 +538,7 @@ export async function reprintMimicTextOverlay(
     textBackingColor?: string;
     docaiLayerPositions?: Record<string, MimicDocAiLayerPositionRow[]>;
     slideCopyOverrides?: MimicReprintSlideCopyOverride[];
-    logoOverlay?: { url: string; position?: string };
+    logoOverlay?: { url: string; position?: string; asset_id?: string };
     frameOverlay?: { url: string; asset_id?: string };
   }
 ): Promise<ReprintTextOverlayResult> {
@@ -555,10 +566,11 @@ export async function reprintMimicTextOverlay(
   if (opts?.slideCopyOverrides && opts.slideCopyOverrides.length > 0) {
     body.slide_copy_overrides = opts.slideCopyOverrides;
   }
-  if (opts?.logoOverlay?.url?.trim()) {
+  if (opts?.logoOverlay?.url?.trim() || opts?.logoOverlay?.asset_id?.trim()) {
     body.logo_overlay = {
-      url: opts.logoOverlay.url.trim(),
+      ...(opts.logoOverlay.url?.trim() ? { url: opts.logoOverlay.url.trim() } : {}),
       position: opts.logoOverlay.position?.trim() || "br",
+      ...(opts.logoOverlay.asset_id?.trim() ? { asset_id: opts.logoOverlay.asset_id.trim() } : {}),
     };
   }
   if (opts?.frameOverlay?.url?.trim() || opts?.frameOverlay?.asset_id?.trim()) {
@@ -596,7 +608,7 @@ export async function reprintVideoBrandOverlays(
   projectSlug: string,
   taskId: string,
   opts?: {
-    logoOverlay?: { url: string; position?: string };
+    logoOverlay?: { url: string; position?: string; asset_id?: string };
     frameOverlay?: { url: string; asset_id?: string };
   }
 ): Promise<ReprintVideoBrandOverlaysResult> {
@@ -608,10 +620,11 @@ export async function reprintVideoBrandOverlays(
     ? `/v1/review-queue/${encodeURIComponent(slug)}/reprint-video-brand-overlays?task_id=${encodeURIComponent(tid)}`
     : `/v1/review-queue/${encodeURIComponent(slug)}/task/${encodeURIComponent(tid)}/reprint-video-brand-overlays`;
   const body: Record<string, unknown> = {};
-  if (opts?.logoOverlay?.url?.trim()) {
+  if (opts?.logoOverlay?.url?.trim() || opts?.logoOverlay?.asset_id?.trim()) {
     body.logo_overlay = {
-      url: opts.logoOverlay.url.trim(),
+      ...(opts.logoOverlay.url?.trim() ? { url: opts.logoOverlay.url.trim() } : {}),
       position: opts.logoOverlay.position?.trim() || "br",
+      ...(opts.logoOverlay.asset_id?.trim() ? { asset_id: opts.logoOverlay.asset_id.trim() } : {}),
     };
   }
   if (opts?.frameOverlay?.url?.trim() || opts?.frameOverlay?.asset_id?.trim()) {
@@ -1486,6 +1499,29 @@ export async function getLearningRules(projectSlug: string) {
   );
 }
 
+export async function getLearningRuleEffectiveness(
+  projectSlug: string,
+  opts?: { window_days?: number; min_decided?: number }
+) {
+  const params = new URLSearchParams();
+  if (opts?.window_days != null) params.set("window_days", String(opts.window_days));
+  if (opts?.min_decided != null) params.set("min_decided", String(opts.min_decided));
+  const qs = params.toString();
+  return coreGet<Record<string, unknown>>(
+    `/v1/learning/${encodeURIComponent(projectSlug)}/rules/effectiveness${qs ? `?${qs}` : ""}`
+  );
+}
+
+export async function getMarketerPerformanceSummary(
+  projectSlug: string,
+  opts?: { window_days?: number }
+) {
+  const qs = opts?.window_days != null ? `?window_days=${opts.window_days}` : "";
+  return coreGet<Record<string, unknown>>(
+    `/v1/learning/${encodeURIComponent(projectSlug)}/marketer-summary${qs}`
+  );
+}
+
 export async function getLearningInsights(projectSlug: string) {
   return coreGet<{ ok: boolean; insights: Record<string, unknown>[] }>(
     `/v1/learning/${encodeURIComponent(projectSlug)}/insights`
@@ -1702,6 +1738,12 @@ export async function triggerLlmApprovalReview(
     task_ids?: string[];
     skip_if_reviewed_within_days?: number;
     force_rereview?: boolean;
+    platform?: string | null;
+    flow_type?: string | null;
+    decided_after?: string | null;
+    decided_before?: string | null;
+    /** Latest-decision lanes. Default APPROVED; use REJECTED/NEEDS_EDIT for failure lane. */
+    decisions?: string[];
     /** Max score (exclusive) for improvement pending rules; Core defaults ~0.75 if omitted. */
     mint_pending_hints_below_score?: number | null;
     /** @deprecated No-op — Core always creates pending rules when score thresholds match. */
@@ -1715,6 +1757,14 @@ export async function triggerLlmApprovalReview(
   return corePost<Record<string, unknown>>(
     `/v1/learning/${encodeURIComponent(projectSlug)}/llm-review-approved`,
     body
+  );
+}
+
+/** Manual Meta Graph insights pull (same path as the metrics cron). */
+export async function pullMetaMetricsForProject(projectSlug: string) {
+  return corePost<Record<string, unknown>>(
+    `/v1/metrics/pull/${encodeURIComponent(projectSlug)}`,
+    {}
   );
 }
 
@@ -2069,6 +2119,25 @@ export async function patchSignalPackNotes(
   );
 }
 
+export async function appendSignalPackIdea(
+  projectSlug: string,
+  packId: string,
+  body: {
+    title: string;
+    concept?: string;
+    target_flow_type: string;
+    platform?: string;
+    content_lens?: "niche" | "product";
+  }
+) {
+  return corePostRequired<{
+    ok: boolean;
+    updated: number;
+    ideas_count: number;
+    idea: Record<string, unknown>;
+  }>(`/v1/signal-packs/${encodeURIComponent(projectSlug)}/${encodeURIComponent(packId)}/ideas/append`, body);
+}
+
 // ── Inputs sources (scrapers) ─────────────────────────────────────────────
 
 export type InputsSourceRow = {
@@ -2182,6 +2251,55 @@ export async function listInputsScraperRuns(projectSlug: string, limit = 10) {
   }>(`/v1/inputs-sources/${encodeURIComponent(projectSlug)}/scraper-runs?limit=${limit}`);
 }
 
+export interface InputsProcessingProfile {
+  id: string;
+  project_id: string;
+  criteria_json: Record<string, unknown>;
+  rating_model: string;
+  synth_model: string;
+  max_rows_for_rating: number;
+  max_rows_per_llm_batch: number;
+  max_ideas_in_signal_pack: number;
+  max_insights_for_ideas_llm?: number;
+  min_top_performer_insights_for_ideas_llm?: number;
+  min_llm_score_for_pack: string;
+  extra_instructions: string | null;
+  updated_at: string;
+}
+
+export async function getInputsProcessingProfile(projectSlug: string) {
+  return coreGetRequired<{
+    ok: boolean;
+    profile: InputsProcessingProfile;
+    criteria_help?: Record<string, unknown>;
+  }>(`/v1/inputs-processing/${encodeURIComponent(projectSlug)}/profile`);
+}
+
+export async function putInputsProcessingProfile(
+  projectSlug: string,
+  body: {
+    rating_model?: string;
+    synth_model?: string;
+    max_rows_for_rating?: number;
+    max_rows_per_llm_batch?: number;
+    max_ideas_in_signal_pack?: number;
+    max_insights_for_ideas_llm?: number;
+    min_top_performer_insights_for_ideas_llm?: number;
+    min_llm_score_for_pack?: number;
+    extra_instructions?: string | null;
+    criteria_json?: Record<string, unknown>;
+  }
+) {
+  const data = await corePut<{ ok: boolean; profile: InputsProcessingProfile }>(
+    `/v1/inputs-processing/${encodeURIComponent(projectSlug)}/profile`,
+    body
+  );
+  if (!data?.ok) {
+    throw new Error("Failed to update processing profile");
+  }
+  return data;
+}
+
 export async function buildIdeasFromImport(
   projectSlug: string,
   importId: string,
@@ -2207,6 +2325,8 @@ export async function buildSignalPackFromImport(
   importId: string,
   body?: {
     idea_list_id?: string;
+    /** Research brief only — no idea LLM. Ideas are created on Market Intelligence. */
+    brief_only?: boolean;
     run_name?: string;
     notes?: string;
     format_limits?: Record<string, number>;
@@ -2218,6 +2338,7 @@ export async function buildSignalPackFromImport(
     run_id?: string;
     ideas_count?: number;
     idea_list_id?: string;
+    mode?: string;
     error?: string;
     message?: string;
   }>(

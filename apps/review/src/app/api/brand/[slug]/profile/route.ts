@@ -1,3 +1,4 @@
+import { brandAccessDeniedResponse } from "@/lib/brand-access-guard";
 import { NextRequest, NextResponse } from "next/server";
 import {
   getBrand,
@@ -25,6 +26,11 @@ async function resolveDisplayName(slug: string): Promise<string> {
 
 export async function GET(_req: NextRequest, ctx: Ctx) {
   const { slug } = await ctx.params;
+  {
+    const denied = await brandAccessDeniedResponse(slug);
+    if (denied) return denied;
+  }
+
   if (!slug) return NextResponse.json({ error: "Missing brand" }, { status: 400 });
 
   const [strategy, brand, product, platforms, brandProfile, displayName] = await Promise.all([
@@ -52,6 +58,11 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
 
 export async function POST(req: NextRequest, ctx: Ctx) {
   const { slug } = await ctx.params;
+  {
+    const denied = await brandAccessDeniedResponse(slug);
+    if (denied) return denied;
+  }
+
   if (!slug) return NextResponse.json({ error: "Missing brand" }, { status: 400 });
 
   const body = (await req.json()) as Record<string, string | string[] | undefined>;

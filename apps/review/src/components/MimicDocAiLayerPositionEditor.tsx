@@ -11,7 +11,12 @@ import {
   clampMimicDocAiInitialEditorFontPx,
   refKeyFromLayerPositionKey,
 } from "@caf-core-carousel/mimic-docai-layer-positions";
-import type { BrandSlideFrameOption } from "@/lib/brand-asset-url";
+import type {
+  BrandLogoPosition,
+  BrandSlideFrameOption,
+  BrandSlideLogoOption,
+} from "@/lib/brand-asset-url";
+import { BRAND_LOGO_POSITIONS } from "@/lib/brand-asset-url";
 import { resolveTemplateBgHandleDisplayText } from "@/lib/mimic-template-bg";
 
 const CANVAS_W = 1080;
@@ -350,6 +355,11 @@ type MimicDocAiLayerPositionEditorProps = {
   logoStampEnabled?: boolean;
   onLogoStampEnabledChange?: (enabled: boolean) => void;
   brandLogoPreviewUrl?: string;
+  brandLogos?: BrandSlideLogoOption[];
+  selectedLogoAssetId?: string;
+  onSelectedLogoAssetIdChange?: (assetId: string) => void;
+  logoPosition?: BrandLogoPosition;
+  onLogoPositionChange?: (position: BrandLogoPosition) => void;
   /** When set, preview the brand slide frame on top of the canvas. */
   frameOverlayUrl?: string;
   frameStampEnabled?: boolean;
@@ -656,6 +666,11 @@ export function MimicDocAiLayerPositionEditor({
   logoStampEnabled,
   onLogoStampEnabledChange,
   brandLogoPreviewUrl = "",
+  brandLogos = [],
+  selectedLogoAssetId = "",
+  onSelectedLogoAssetIdChange,
+  logoPosition = "br",
+  onLogoPositionChange,
   frameOverlayUrl = "",
   frameStampEnabled,
   onFrameStampEnabledChange,
@@ -1826,7 +1841,7 @@ export function MimicDocAiLayerPositionEditor({
                   src={logoOverlayUrl}
                   alt="Brand logo preview"
                   draggable={false}
-                  className="mimic-docai-editor__logo-preview"
+                  className={`mimic-docai-editor__logo-preview mimic-docai-editor__logo-preview--${logoPosition}`}
                 />
               ) : null}
             </div>
@@ -2219,17 +2234,59 @@ export function MimicDocAiLayerPositionEditor({
                   ))}
                 </div>
               ) : null}
-              {brandLogoPreviewUrl.trim() && onLogoStampEnabledChange ? (
+              {((brandLogos.length > 0 || brandLogoPreviewUrl.trim()) && onLogoStampEnabledChange) ? (
                 <label className="mimic-layer-editor-panel__option">
                   <input
                     type="checkbox"
                     checked={Boolean(logoStampEnabled)}
                     onChange={(e) => onLogoStampEnabledChange(e.target.checked)}
                   />
-                  <span>Stamp brand logo (lower-right)</span>
+                  <span>Stamp brand logo</span>
                 </label>
               ) : null}
-              {logoStampEnabled && brandLogoPreviewUrl.trim() ? (
+              {logoStampEnabled && onLogoPositionChange ? (
+                <div className="brand-logo-corner-picker" title="Logo corner" role="group" aria-label="Logo corner">
+                  {BRAND_LOGO_POSITIONS.map((corner) => {
+                    const active = corner.id === logoPosition;
+                    return (
+                      <button
+                        key={corner.id}
+                        type="button"
+                        className={`brand-logo-corner-picker__item${active ? " brand-logo-corner-picker__item--active" : ""}`}
+                        title={corner.label}
+                        aria-label={corner.label}
+                        aria-pressed={active}
+                        onClick={() => onLogoPositionChange(corner.id)}
+                      >
+                        {corner.short}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+              {logoStampEnabled && brandLogos.length > 1 && onSelectedLogoAssetIdChange ? (
+                <div className="brand-frame-picker brand-logo-picker" title="Pick a logo">
+                  {brandLogos.map((logo) => {
+                    const active = logo.assetId === selectedLogoAssetId;
+                    return (
+                      <button
+                        key={logo.assetId}
+                        type="button"
+                        className={`brand-frame-picker__item${active ? " brand-frame-picker__item--active" : ""}`}
+                        title={logo.label}
+                        aria-label={logo.label}
+                        aria-pressed={active}
+                        onClick={() => onSelectedLogoAssetIdChange(logo.assetId)}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={logo.displayUrl} alt="" className="brand-logo-picker__img" />
+                        <span>{logo.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+              {logoStampEnabled && brandLogoPreviewUrl.trim() && brandLogos.length <= 1 ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={brandLogoPreviewUrl} alt="Brand logo" className="brand-logo-chip" />
               ) : null}
@@ -2286,7 +2343,7 @@ export function MimicDocAiLayerPositionEditor({
                     <button
                       type="button"
                       className="btn-secondary btn-sm mimic-docai-editor__apply-typography-btn"
-                      disabled={overlayApplyBusy || !brandLogoPreviewUrl.trim()}
+                      disabled={overlayApplyBusy || !(brandLogos.length > 0 || brandLogoPreviewUrl.trim())}
                       onClick={() => onApplyLogoStampToAllSlides()}
                     >
                       Brand logo → all slides

@@ -12,6 +12,7 @@ import {
   assetIdFromBrandProxyUrl,
   resolveBrandFrameReprintUrl,
   resolveBrandLogoReprintUrl,
+  resolveBrandLogoReprintUrlById,
 } from "@/lib/brand-asset-url";
 
 export const dynamic = "force-dynamic";
@@ -91,21 +92,27 @@ export async function POST(request: NextRequest) {
       rawLogo && typeof rawLogo === "object" && !Array.isArray(rawLogo) && typeof rawLogo.url === "string"
         ? rawLogo.url.trim()
         : "";
-    if (logoUrl.startsWith("/api/project-config/brand-assets/proxy")) {
+    const logoAssetId =
+      rawLogo && typeof rawLogo === "object" && !Array.isArray(rawLogo) && typeof rawLogo.asset_id === "string"
+        ? rawLogo.asset_id.trim()
+        : "";
+    if (logoAssetId || logoUrl.startsWith("/api/project-config/brand-assets/proxy") || (logoUrl && !/^https?:\/\//i.test(logoUrl))) {
       const assets = await listBrandAssets(slug);
       const pool = assets?.brand_assets ?? [];
       const proxyId = assetIdFromBrandProxyUrl(logoUrl);
-      logoUrl = resolveBrandLogoReprintUrl(slug, pool, CAF_CORE_URL);
-      if (!logoUrl && proxyId) {
-        const hit = pool.find((a) => a.id === proxyId);
-        if (hit) logoUrl = resolveBrandLogoReprintUrl(slug, [hit], CAF_CORE_URL);
+      const pickId = logoAssetId || proxyId;
+      if (pickId) {
+        logoUrl = resolveBrandLogoReprintUrlById(slug, pool, pickId, CAF_CORE_URL);
+      } else {
+        logoUrl = resolveBrandLogoReprintUrl(slug, pool, CAF_CORE_URL);
       }
-    } else if (logoUrl && !/^https?:\/\//i.test(logoUrl)) {
-      const assets = await listBrandAssets(slug);
-      logoUrl = resolveBrandLogoReprintUrl(slug, assets?.brand_assets ?? [], CAF_CORE_URL);
     }
     const logoOverlay = logoUrl
-      ? { url: logoUrl, position: typeof rawLogo.position === "string" ? rawLogo.position.trim() : "br" }
+      ? {
+          url: logoUrl,
+          position: typeof rawLogo?.position === "string" ? rawLogo.position.trim() : "br",
+          ...(logoAssetId ? { asset_id: logoAssetId } : {}),
+        }
       : undefined;
 
     const rawFrame = body?.frame_overlay;

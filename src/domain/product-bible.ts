@@ -380,11 +380,51 @@ export function resolveFluxProductReferenceAssets(
   return resolveHeygenProductReferenceAssets(snapshot).slice(0, max);
 }
 
+function roleLabelForProductPrompt(role: ProductBibleAssetRole): string {
+  return role.replace(/_/g, " ");
+}
+
+/** Prefer feature label, then humanized role — used in File N [scope] lines. */
+export function productAssetScopeLabel(
+  asset: ProductBibleResolvedAsset,
+  snapshot: ProductBibleSnapshotV1 | null | undefined
+): string {
+  const featureKey = asset.feature_key?.trim();
+  if (featureKey && snapshot) {
+    const product = snapshot.products.find((p) => p.key === asset.product_key);
+    const feature = product?.features.find((f) => f.key === featureKey);
+    if (feature?.label?.trim()) return feature.label.trim();
+    return featureKey.replace(/_/g, " ");
+  }
+  return roleLabelForProductPrompt(asset.role);
+}
+
+/**
+ * One HeyGen / LLM line that maps File N → feature/role + marketer label.
+ * Order must match `files[]` attachment order from `resolveHeygenProductReferenceAssets`
+ * (optionally offset when brand/BVS files were already merged onto the request).
+ */
+export function formatProductHeygenPromptAssetLine(
+  asset: ProductBibleResolvedAsset,
+  index1Based: number,
+  snapshot: ProductBibleSnapshotV1 | null | undefined
+): string {
+  const scope = productAssetScopeLabel(asset, snapshot);
+  const label = asset.label?.trim();
+  const notes = asset.usage_notes?.trim();
+  const step = asset.step_order != null ? `flow step ${asset.step_order}` : null;
+  const role = roleLabelForProductPrompt(asset.role);
+  const detail = [label, step, notes].filter(Boolean).join(" — ");
+  const suffix = detail || role;
+  return `- File ${index1Based} [${scope}]: ${suffix} — insert this real product UI when that feature/flow step is shown; do not invent app screens.`;
+}
+
 /** Compact module list for LLM creation pack (no URLs). */
 export function slimProductBibleForCreationPack(
   snapshot: ProductBibleSnapshotV1 | null | undefined
 ): Record<string, unknown> | null {
   if (!snapshot || snapshot.products.length === 0) return null;
+  const orderedRefs = resolveHeygenProductReferenceAssets(snapshot);
   return {
     schema_version: PRODUCT_BIBLE_SCHEMA,
     application_guide: snapshot.application_guide,
@@ -401,61 +441,90 @@ export function slimProductBibleForCreationPack(
       })),
       asset_count: p.asset_refs.length,
     })),
-    resolved_asset_labels: snapshot.resolved_assets
-      .slice(0, PRODUCT_BIBLE_HEYGEN_REF_MAX)
-      .map((a) => ({
-        role: a.role,
-        label: a.label,
-        step_order: a.step_order,
-        product_key: a.product_key,
-        feature_key: a.feature_key,
-      })),
+    /**
+     * Ordered evidence refs — `file_index` is 1-based within the product evidence set.
+     * At HeyGen render, indices are offset to match the full `files[]` array when BVS
+     * brand files were already attached.
+     */
+    product_evidence_files: orderedRefs.map((a, i) => ({
+      file_index: i + 1,
+      role: a.role,
+      label: a.label,
+      usage_notes: a.usage_notes,
+      step_order: a.step_order,
+      product_key: a.product_key,
+      feature_key: a.feature_key,
+      scope_label: productAssetScopeLabel(a, snapshot),
+    })),
+    /** @deprecated prefer product_evidence_files (includes file_index + scope_label) */
+    resolved_asset_labels: orderedRefs.map((a) => ({
+      role: a.role,
+      label: a.label,
+      step_order: a.step_order,
+      product_key: a.product_key,
+      feature_key: a.feature_key,
+    })),
   };
 }
 
-const MAX_VIDEO_AGENT_PRODUCT_BIBLE_LINES = 12;
+const MAX_VIDEO_AGENT_PRODUCT_MODULE_LINES = 8;
 
-/** HeyGen Video Agent prompt block describing product modules and screenshot usage. */
+export interface ProductBibleVideoAgentPromptOpts {
+  /** Add to 1-based File N so indices match final HeyGen `files[]` after prior merges (e.g. BVS). */
+  fileIndexOffset?: number;
+}
+
+/**
+ * HeyGen Video Agent prompt block describing product modules and numbered screenshot files.
+ * Pass the same `attachedAssets` array used to build `files[]` so File N labels stay aligned.
+ */
 export function buildProductBibleVideoAgentPromptBlock(
-  snapshot: ProductBibleSnapshotV1 | null | undefined
+  snapshot: ProductBibleSnapshotV1 | null | undefined,
+  attachedAssets?: ProductBibleResolvedAsset[],
+  opts?: ProductBibleVideoAgentPromptOpts
 ): string | null {
   if (!snapshot || snapshot.products.length === 0) return null;
-  const lines: string[] = [];
+  const moduleLines: string[] = [];
   const guide = snapshot.application_guide;
+  const refs =
+    attachedAssets && attachedAssets.length > 0
+      ? attachedAssets
+      : resolveHeygenProductReferenceAssets(snapshot);
+  const offset = Math.max(0, Math.trunc(opts?.fileIndexOffset ?? 0));
 
   if (guide.instructions.trim()) {
-    lines.push(`Product evidence guide: ${guide.instructions.trim().slice(0, 400)}`);
+    moduleLines.push(`Product evidence guide: ${guide.instructions.trim().slice(0, 400)}`);
   }
   if (guide.heygen_policy?.trim()) {
-    lines.push(`Screenshot usage: ${guide.heygen_policy.trim().slice(0, 300)}`);
+    moduleLines.push(`Screenshot usage: ${guide.heygen_policy.trim().slice(0, 300)}`);
   }
 
   for (const product of snapshot.products) {
     const header = [product.label, product.one_liner].filter(Boolean).join(" — ");
-    if (header) lines.push(`Product module: ${header}`);
-    if (product.description) lines.push(`  ${product.description.slice(0, 280)}`);
+    if (header) moduleLines.push(`Product module: ${header}`);
+    if (product.description) moduleLines.push(`  ${product.description.slice(0, 280)}`);
     for (const feature of product.features.slice(0, 4)) {
       const feat = [feature.label, feature.description].filter(Boolean).join(": ");
-      if (feat) lines.push(`  Feature: ${feat.slice(0, 200)}`);
-    }
-    const refs = snapshot.resolved_assets.filter((a) => a.product_key === product.key && hasResolvableUrl(a));
-    if (refs.length > 0) {
-      const refDesc = refs
-        .slice(0, 5)
-        .map((a) => {
-          const parts = [a.role.replace(/_/g, " ")];
-          if (a.label) parts.push(a.label);
-          if (a.step_order != null) parts.push(`step ${a.step_order}`);
-          return parts.join(" ");
-        })
-        .join("; ");
-      lines.push(`  Attached screenshots: ${refDesc}`);
+      if (feat) moduleLines.push(`  Feature: ${feat.slice(0, 200)}`);
     }
   }
 
-  if (lines.length === 0) return null;
-  return [
+  const lines: string[] = [
     "Product bible (use attached product screenshots to show real UI — do not invent app screens):",
-    ...lines.slice(0, MAX_VIDEO_AGENT_PRODUCT_BIBLE_LINES).map((l) => `- ${l}`),
-  ].join("\n");
+    ...moduleLines.slice(0, MAX_VIDEO_AGENT_PRODUCT_MODULE_LINES).map((l) => `- ${l}`),
+  ];
+
+  if (refs.length > 0) {
+    const firstN = offset + 1;
+    const lastN = offset + refs.length;
+    lines.push(
+      `- Uploaded product evidence files (${refs.length} attached as File ${firstN}–${lastN} on this request — File N matches files[] order; insert the matching screenshot when that feature/flow step appears):`
+    );
+    for (let i = 0; i < refs.length; i++) {
+      lines.push(formatProductHeygenPromptAssetLine(refs[i]!, offset + i + 1, snapshot));
+    }
+  }
+
+  if (lines.length <= 1) return null;
+  return lines.join("\n");
 }

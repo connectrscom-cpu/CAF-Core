@@ -27,7 +27,12 @@ import {
   type MimicTemplateBgSlot,
 } from "@/lib/mimic-template-bg";
 import { registerReviewBackgroundJob } from "@/lib/review-background-jobs";
-import type { BrandSlideFrameOption } from "@/lib/brand-asset-url";
+import type {
+  BrandLogoPosition,
+  BrandSlideFrameOption,
+  BrandSlideLogoOption,
+} from "@/lib/brand-asset-url";
+import { normalizeBrandLogoPosition } from "@/lib/brand-asset-url";
 import { BvsInfluencePanel } from "@/components/BvsInfluencePanel";
 import { MimicSlideWhyPanel } from "@/components/MimicSlideWhyPanel";
 import { NewVisualSlideWhyPanel } from "@/components/NewVisualSlideWhyPanel";
@@ -1152,6 +1157,8 @@ export interface MimicCarouselLayerEditorPanelProps {
   brandLogoUrl?: string;
   /** Absolute URL for Puppeteer reprint (may differ from display proxy URL). */
   brandLogoReprintUrl?: string;
+  /** Brand logos available for stamp picker (preferred over single URL props). */
+  brandLogos?: BrandSlideLogoOption[];
 
   /** Brand bible slide_frame assets — composited on top when the frame toggle is on. */
   brandFrames?: BrandSlideFrameOption[];
@@ -1344,6 +1351,7 @@ export function MimicCarouselLayerEditorPanel({
 
   brandLogoUrl = "",
   brandLogoReprintUrl = "",
+  brandLogos = [],
 
   brandFrames = [],
 
@@ -1372,10 +1380,67 @@ export function MimicCarouselLayerEditorPanel({
     }
   }, [logoEnabled, taskId]);
 
-  const logoStampUrl = (brandLogoReprintUrl.trim() || brandLogoUrl.trim());
+  const [selectedLogoAssetId, setSelectedLogoAssetId] = useState("");
+  const [logoPosition, setLogoPosition] = useState<BrandLogoPosition>(() => {
+    if (typeof window === "undefined" || !taskId.trim()) return "br";
+    try {
+      return normalizeBrandLogoPosition(sessionStorage.getItem(`caf-logo-pos:${taskId.trim()}`));
+    } catch {
+      return "br";
+    }
+  });
+  useEffect(() => {
+    if (brandLogos.length === 0) {
+      setSelectedLogoAssetId("");
+      return;
+    }
+    setSelectedLogoAssetId((prev) => {
+      if (prev && brandLogos.some((l) => l.assetId === prev)) return prev;
+      if (typeof window !== "undefined" && taskId.trim()) {
+        try {
+          const stored = sessionStorage.getItem(`caf-logo-asset:${taskId.trim()}`)?.trim() ?? "";
+          if (stored && brandLogos.some((l) => l.assetId === stored)) return stored;
+        } catch {
+          /* ignore */
+        }
+      }
+      return brandLogos[0]!.assetId;
+    });
+  }, [brandLogos, taskId]);
+  useEffect(() => {
+    if (!taskId.trim() || !selectedLogoAssetId) return;
+    try {
+      sessionStorage.setItem(`caf-logo-asset:${taskId.trim()}`, selectedLogoAssetId);
+    } catch {
+      /* ignore */
+    }
+  }, [selectedLogoAssetId, taskId]);
+  useEffect(() => {
+    if (!taskId.trim()) return;
+    try {
+      sessionStorage.setItem(`caf-logo-pos:${taskId.trim()}`, logoPosition);
+    } catch {
+      /* ignore */
+    }
+  }, [logoPosition, taskId]);
+
+  const selectedLogo = useMemo(
+    () => brandLogos.find((l) => l.assetId === selectedLogoAssetId) ?? brandLogos[0] ?? null,
+    [brandLogos, selectedLogoAssetId]
+  );
+  const logoDisplayUrl = selectedLogo?.displayUrl?.trim() || brandLogoUrl.trim();
+  const logoStampUrl =
+    selectedLogo?.reprintUrl?.trim() || brandLogoReprintUrl.trim() || brandLogoUrl.trim();
   const logoOverlayPayload = useMemo(
-    () => (logoEnabled && logoStampUrl ? { url: logoStampUrl, position: "br" } : undefined),
-    [logoEnabled, logoStampUrl]
+    () =>
+      logoEnabled && logoStampUrl
+        ? {
+            url: logoStampUrl,
+            position: logoPosition,
+            ...(selectedLogo?.assetId ? { asset_id: selectedLogo.assetId } : {}),
+          }
+        : undefined,
+    [logoEnabled, logoStampUrl, selectedLogo, logoPosition]
   );
 
   const [frameEnabled, setFrameEnabled] = useState(false);
@@ -1800,7 +1865,7 @@ export function MimicCarouselLayerEditorPanel({
       currentDraft: DocAiLayerOverride[]
     ) => {
       if (!taskId.trim() || !projectSlug.trim()) return;
-      if (logoEnabled && brandLogoUrl.trim() && !logoStampUrl) {
+      if (logoEnabled && logoDisplayUrl.trim() && !logoStampUrl) {
         throw new Error(
           "Brand logo is enabled but has no renderer URL — re-upload the logo in Brand profile, then reprint."
         );
@@ -1855,7 +1920,7 @@ export function MimicCarouselLayerEditorPanel({
       logoOverlayPayload,
       logoStampUrl,
       logoEnabled,
-      brandLogoUrl,
+      logoDisplayUrl,
       frameOverlayPayload,
       buildReprintTypographyPatch,
       buildSlideCopyOverrides,
@@ -4140,7 +4205,7 @@ function ensureFullBleedTextLayerBoxes(
 
             brandPalette={brandPalette}
 
-            logoOverlayUrl={logoOverlayPayload ? brandLogoUrl : ""}
+            logoOverlayUrl={logoOverlayPayload ? logoDisplayUrl : ""}
 
             textBackingEnabled={reprintTextBacking}
             onTextBackingEnabledChange={setReprintTextBacking}
@@ -4148,7 +4213,12 @@ function ensureFullBleedTextLayerBoxes(
             onTextBackingColorHexChange={setReprintTextBackingHex}
             logoStampEnabled={logoEnabled}
             onLogoStampEnabledChange={setLogoEnabled}
-            brandLogoPreviewUrl={brandLogoUrl}
+            brandLogoPreviewUrl={logoDisplayUrl}
+            brandLogos={brandLogos}
+            selectedLogoAssetId={selectedLogo?.assetId ?? ""}
+            onSelectedLogoAssetIdChange={setSelectedLogoAssetId}
+            logoPosition={logoPosition}
+            onLogoPositionChange={setLogoPosition}
 
             frameOverlayUrl={framePreviewUrl}
             frameStampEnabled={frameEnabled}

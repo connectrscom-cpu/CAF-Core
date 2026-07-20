@@ -143,6 +143,11 @@ export async function jsonTaskDetailResponse(
       carousel_regenerate_error: regenState.error ?? undefined,
       carousel_regenerate_done: regenState.total > 0 ? String(regenState.done_count) : undefined,
       carousel_regenerate_total: regenState.total > 0 ? String(regenState.total) : undefined,
+      health_state: job.job_health?.state ?? undefined,
+      health_reason_code: job.job_health?.reason_code ?? undefined,
+      health_message: job.job_health?.human_message ?? undefined,
+      health_action: job.job_health?.suggested_action ?? undefined,
+      health_action_hint: job.job_health?.action_hint ?? undefined,
     };
     const body: Record<string, unknown> = { rowIndex: 0, data };
     if (opts?.includeJob) body.job = job;

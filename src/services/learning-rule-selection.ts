@@ -27,6 +27,16 @@ import {
 export interface GenerationRuleSelectionOptions {
   /** Include `pending` generation-guidance rules (used by rework to honor human steering). */
   include_pending_generation_guidance?: boolean;
+  /**
+   * Task being generated — enables deterministic holdout experiments for rules
+   * carrying `action_payload.holdout_fraction`; withheld rules are returned in
+   * `control_rule_ids` for counterfactual attribution.
+   */
+  task_id?: string | null;
+  /** Cap on distinct guidance rules injected (compiler default 12). */
+  max_rules?: number;
+  /** Char budget for merged guidance (compiler default 4000). */
+  max_guidance_chars?: number;
 }
 
 /**

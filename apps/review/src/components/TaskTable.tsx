@@ -16,6 +16,7 @@ import {
 } from "@/lib/review-queue-display";
 import { resolveQueueRowPreview } from "@/lib/marketer/preview-resolver";
 import { PreviewMediaCard } from "@/components/marketer/PreviewMediaCard";
+import { JobHealthBanner } from "@/components/JobHealthBanner";
 import { TaskContentGrid } from "@/components/TaskContentGrid";
 
 export type GroupBy = "" | "project" | "platform" | "flow_type" | "recommended_route";
@@ -157,7 +158,16 @@ function TaskRow({
           {flowDetail ? <span className="task-flow-cell__detail">{flowDetail}</span> : null}
         </div>
       </td>
-      <td>{statusBadge(reviewStatus, marketerMode)}</td>
+      <td>
+        {statusBadge(reviewStatus, marketerMode)}
+        <JobHealthBanner
+          compact
+          state={getVal(row, "health_state")}
+          reasonCode={getVal(row, "health_reason_code")}
+          message={getVal(row, "health_message")}
+          suggestedAction={getVal(row, "health_action")}
+        />
+      </td>
       <td>{decision ? decisionBadge(decision, marketerMode) : "—"}</td>
       {!marketerMode && <td>{route}</td>}
       {!hideOpenColumn && (
@@ -363,7 +373,8 @@ export function TaskTable({
           marketerMode={marketerMode}
         />
       ) : (
-      <table>
+      <div className="table-scroll" role="region" aria-label="Task list" tabIndex={0}>
+      <table className="task-queue-table">
         <thead>
           <tr>
             <th style={{ width: marketerMode ? 96 : 72 }}>Preview</th>
@@ -393,6 +404,7 @@ export function TaskTable({
           marketerMode={marketerMode}
         />
       </table>
+      </div>
       )}
       {items.length === 0 && <div className="table-empty">No tasks match the current filters</div>}
     </div>

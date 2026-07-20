@@ -4,6 +4,8 @@
 
 **Convention:** “CAF” means the platform; **CAF Core** is the backend in this repository.
 
+> **Current-state note (2026-07-16):** For the latest operational map (content routes, text/UGC lanes, setup packs, LinkedIn research), prefer **[CAF_CURRENT_STATE_CONTEXT_PACK.md](./CAF_CURRENT_STATE_CONTEXT_PACK.md)**. For ranked improvement planning with Fable: **[FABLE_IMPROVEMENT_BRIEFING.md](./FABLE_IMPROVEMENT_BRIEFING.md)**.
+
 ---
 
 ## Table of contents

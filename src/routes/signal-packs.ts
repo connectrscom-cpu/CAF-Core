@@ -19,7 +19,8 @@ import { parseSignalPackExcel } from "../services/signal-pack-parser.js";
 import { tryInsertApiCallAudit } from "../repositories/api-call-audit.js";
 import { trimRunDisplayName } from "../lib/run-display-name.js";
 import { materializeRunCandidates } from "../services/run-candidates-materialize.js";
-import { parseIdeasV2, parseSelectedIdeaIds } from "../domain/signal-pack-ideas-v2.js";
+import { parseIdeasV2, parseSelectedIdeaIds, signalPackIdeaSchema } from "../domain/signal-pack-ideas-v2.js";
+import { buildManualSignalPackIdea } from "../domain/manual-signal-pack-idea.js";
 import { readSignalPackJobsJson, signalPackJobsApiFields } from "../domain/jobs-json-compat.js";
 import { assertGroundingInsightIdsUniqueAcrossIdeas } from "../domain/idea-grounding-uniqueness.js";
 import { upsertIdea, replaceIdeaGroundingInsights } from "../repositories/ideas.js";
@@ -461,6 +462,83 @@ export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool;
       /* ignore */
     }
     return { ok: true, updated: n, ideas_count: ideas.length };
+  });
+
+  /**
+   * POST /v1/signal-packs/:project_slug/:id/ideas/append
+   *
+   * Appends one marketer-authored idea without re-validating the whole pack array
+   * (existing rows are preserved as stored).
+   */
+  app.post("/v1/signal-packs/:project_slug/:id/ideas/append", async (request, reply) => {
+    const params = z.object({ project_slug: z.string(), id: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const body = z
+      .object({
+        title: z.string().min(1).max(200),
+        concept: z.string().max(1200).optional(),
+        target_flow_type: z.string().min(1).max(80),
+        platform: z.string().min(1).max(80).optional(),
+        content_lens: z.enum(["niche", "product"]).optional(),
+      })
+      .safeParse(request.body);
+    if (!body.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_body", details: body.error.flatten() });
+    }
+
+    const project = await ensureProject(db, params.data.project_slug);
+    const pack = await getSignalPackById(db, params.data.id);
+    if (!pack) return reply.code(404).send({ ok: false, error: "not_found" });
+    if (pack.project_id !== project.id) return reply.code(403).send({ ok: false, error: "wrong_project" });
+
+    let idea: ReturnType<typeof buildManualSignalPackIdea>;
+    try {
+      idea = buildManualSignalPackIdea(body.data);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return reply.code(400).send({ ok: false, error: msg });
+    }
+
+    const parsed = signalPackIdeaSchema.safeParse(idea);
+    if (!parsed.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_idea", details: parsed.error.flatten() });
+    }
+
+    const existing = Array.isArray(pack.ideas_json) ? [...pack.ideas_json] : [];
+    const next = [...existing, idea];
+    const n = await updateSignalPackIdeasJson(db, pack.id, next);
+
+    try {
+      await upsertIdea(db, {
+        project_id: project.id,
+        idea_id: idea.id,
+        inputs_import_id: pack.source_inputs_import_id ?? null,
+        run_id: pack.run_id,
+        title: idea.title,
+        three_liner: idea.three_liner,
+        thesis: idea.thesis,
+        who_for: idea.who_for,
+        format: String(idea.format ?? "post"),
+        platform: String(idea.platform ?? "Multi"),
+        why_now: idea.why_now,
+        key_points: Array.isArray(idea.key_points) ? idea.key_points : [],
+        novelty_angle: idea.novelty_angle,
+        cta: idea.cta,
+        expected_outcome: idea.expected_outcome,
+        risk_flags: Array.isArray(idea.risk_flags) ? idea.risk_flags : [],
+        status: idea.status,
+        idea_json: idea as unknown as Record<string, unknown>,
+      });
+    } catch {
+      /* dual-write best-effort — ideas_json is canonical for Ideas board */
+    }
+
+    return {
+      ok: true,
+      updated: n,
+      ideas_count: next.length,
+      idea,
+    };
   });
 
   /**

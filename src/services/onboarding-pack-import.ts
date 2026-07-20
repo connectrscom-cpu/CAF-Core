@@ -13,13 +13,22 @@ import {
   type BrandConstraintsRow,
   type StrategyDefaultsRow,
 } from "../repositories/project-config.js";
-import { ensureProject, getProjectBySlug, updateProjectBySlug } from "../repositories/core.js";
+import {
+  ensureProject,
+  getConstraints,
+  getProjectBySlug,
+  mergeConstraintUpdate,
+  updateProjectBySlug,
+  upsertConstraints,
+} from "../repositories/core.js";
 import { insertBrandProfileVersion } from "../repositories/brand-profiles.js";
 import { insertBrandBibleVersion } from "../repositories/brand-bibles.js";
+import { insertProductBibleVersion } from "../repositories/product-bibles.js";
 import { replaceSourceTabRows } from "../repositories/inputs-sources.js";
 import { parseBrandBible } from "../domain/brand-bible.js";
 import { parseBrandProfile } from "../domain/brand-profile.js";
 import { parseContentRouteLaneIdsFromText } from "../domain/content-routes.js";
+import { emptyProductBibleDraft, parseProductBible } from "../domain/product-bible.js";
 import {
   extractHexPalette,
   isGapValue,
@@ -81,26 +90,38 @@ function buildStrategyPatch(sections: ReturnType<typeof parseOnboardingPack>["se
   const s = sections.strategy ?? {};
   const b = brand ?? sections.brand_snapshot ?? {};
   return {
-    core_offer: firstNonEmpty(field(sections, "brand_snapshot", "description"), s["description"] ?? ""),
-    target_audience: firstNonEmpty(s["audience"] ?? "", s["target audience"] ?? ""),
-    audience_problem: s["problem"] ?? "",
-    transformation_promise: s["promise"] ?? "",
-    positioning_statement: s["positioning"] ?? "",
-    differentiation_angle: s["differentiation"] ?? "",
-    strategic_content_pillars: s["content pillars"] ?? "",
-    primary_content_goal: s["content goal"] ?? "",
-    primary_business_goal: s["business goal"] ?? "",
+    project_type: firstNonEmpty(s["project type"] ?? "", s["audience type"] ?? ""),
+    core_offer: firstNonEmpty(
+      s["core offer"] ?? "",
+      field(sections, "brand_snapshot", "description"),
+      s["description"] ?? ""
+    ),
+    target_audience: firstNonEmpty(s["target audience"] ?? "", s["audience"] ?? ""),
+    audience_problem: firstNonEmpty(s["audience problem"] ?? "", s["problem"] ?? ""),
+    transformation_promise: firstNonEmpty(s["transformation promise"] ?? "", s["promise"] ?? ""),
+    positioning_statement: firstNonEmpty(s["positioning statement"] ?? "", s["positioning"] ?? ""),
+    differentiation_angle: firstNonEmpty(s["differentiation angle"] ?? "", s["differentiation"] ?? ""),
+    strategic_content_pillars: firstNonEmpty(s["content pillars"] ?? "", s["strategic content pillars"] ?? ""),
+    primary_content_goal: firstNonEmpty(s["primary content goal"] ?? "", s["content goal"] ?? ""),
+    primary_business_goal: firstNonEmpty(s["primary business goal"] ?? "", s["business goal"] ?? ""),
+    brand_archetype: s["brand archetype"] ?? "",
     publishing_intensity: s["publishing intensity"] ?? "",
     north_star_metric: firstNonEmpty(s["north-star metric"] ?? "", s["north star metric"] ?? ""),
-    owner: s["approval owner"] ?? "",
-    project_type: s["audience type"] ?? "",
-    instagram_handle: firstNonEmpty(b["instagram"] ?? "", b["primary instagram handle"] ?? "").replace(/^@/, ""),
+    owner: firstNonEmpty(s["approval owner"] ?? "", s["content approval owner"] ?? ""),
+    instagram_handle: firstNonEmpty(
+      s["instagram handle"] ?? "",
+      b["instagram handle"] ?? "",
+      b["instagram"] ?? "",
+      b["primary instagram handle"] ?? ""
+    ).replace(/^@/, ""),
     traffic_destination: firstNonEmpty(
+      s["traffic destination"] ?? "",
       field(sections, "publishing", "link-in-bio", "link in bio"),
       b["website"] ?? "",
       b["website / product url"] ?? ""
     ),
     notes: [
+      s["niche vs product ratio"] ? `Niche vs product ratio: ${s["niche vs product ratio"]}` : "",
       field(sections, "publishing", "channels"),
       field(sections, "publishing", "posting schedule"),
       field(sections, "publishing", "hashtag sets"),
@@ -113,13 +134,21 @@ function buildStrategyPatch(sections: ReturnType<typeof parseOnboardingPack>["se
 function buildBrandPatch(sections: ReturnType<typeof parseOnboardingPack>["sections"]): Partial<Omit<BrandConstraintsRow, "id" | "project_id">> {
   const v = sections.voice ?? {};
   const c = sections.compliance ?? {};
-  const bannedClaims = [v["banned claims"] ?? "", c["banned claims"] ?? ""].filter(Boolean).join("\n");
-  const disclaimers = [v["disclaimers"] ?? "", c["disclosures"] ?? ""].filter(Boolean).join("\n");
+  const bannedClaims = [
+    v["banned claims"] ?? "",
+    c["banned claims"] ?? "",
+  ].filter(Boolean).join("\n");
+  const disclaimers = [
+    v["mandatory disclaimers"] ?? "",
+    v["disclaimers"] ?? "",
+    c["disclosures"] ?? "",
+  ].filter(Boolean).join("\n");
   return {
     tone: v["tone"] ?? "",
-    audience_level: v["reading level"] ?? "",
+    voice_style: firstNonEmpty(v["voice style"] ?? "", v["tone / voice"] ?? ""),
+    audience_level: firstNonEmpty(v["audience level"] ?? "", v["reading level"] ?? ""),
     storytelling_style: v["storytelling style"] ?? "",
-    cta_style_rules: v["cta style"] ?? "",
+    cta_style_rules: firstNonEmpty(v["cta style rules"] ?? "", v["cta style"] ?? ""),
     emoji_policy: v["emoji policy"] ?? "",
     banned_words: splitSemicolonList(v["banned words"] ?? ""),
     banned_claims: bannedClaims,
@@ -127,8 +156,11 @@ function buildBrandPatch(sections: ReturnType<typeof parseOnboardingPack>["secti
     notes: [
       v["humor / emotional intensity"] ?? "",
       v["example captions"] ?? "",
+      v["regulated category"] ? `Category: ${v["regulated category"]}` : "",
       c["category"] ? `Category: ${c["category"]}` : "",
+      v["sensitive topics"] ? `Sensitive topics: ${v["sensitive topics"]}` : "",
       c["sensitive topics"] ? `Sensitive topics: ${c["sensitive topics"]}` : "",
+      v["sponsor / affiliate disclosure"] ?? "",
     ]
       .filter(Boolean)
       .join("\n\n") || null,
@@ -136,23 +168,206 @@ function buildBrandPatch(sections: ReturnType<typeof parseOnboardingPack>["secti
   };
 }
 
+function parseOptionalNumber(raw: string): number | null {
+  const t = raw.trim();
+  if (!t || /^\[(?:REC|GAP|FACT)\]/i.test(t) || /use caf defaults/i.test(t) || /^n\/a$/i.test(t)) {
+    return null;
+  }
+  const n = Number(t.replace(/,/g, ""));
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseOptionalBool(raw: string): boolean | null {
+  const t = raw.trim().toLowerCase();
+  if (!t || /use caf defaults/i.test(t) || /^n\/a$/i.test(t) || /^\[(?:rec|gap|fact)\]/i.test(t)) {
+    return null;
+  }
+  if (["true", "yes", "1"].includes(t)) return true;
+  if (["false", "no", "0"].includes(t)) return false;
+  return null;
+}
+
+function buildConstraintsPatch(
+  sections: ReturnType<typeof parseOnboardingPack>["sections"]
+): Parameters<typeof mergeConstraintUpdate>[1] | null {
+  const s = sections.system_limits ?? {};
+  if (Object.keys(s).length === 0) return null;
+
+  const patch: Parameters<typeof mergeConstraintUpdate>[1] = {};
+  const setNum = (key: keyof Parameters<typeof mergeConstraintUpdate>[1], ...labels: string[]) => {
+    for (const label of labels) {
+      const n = parseOptionalNumber(s[label] ?? "");
+      if (n != null) {
+        (patch as Record<string, unknown>)[key] = n;
+        return;
+      }
+    }
+  };
+
+  setNum("max_daily_jobs", "max daily jobs");
+  setNum("min_score_to_generate", "min score to generate");
+  setNum("max_active_prompt_versions", "max active prompt versions");
+  setNum("default_variation_cap", "default variation cap");
+  setNum("auto_validation_pass_threshold", "auto-validation pass threshold");
+  setNum("max_carousel_jobs_per_run", "max carousel jobs (per run plan)", "max carousel jobs");
+  setNum("max_video_jobs_per_run", "max video/reel jobs (per run plan)", "max video jobs");
+
+  const perFlowRaw = firstNonEmpty(
+    s["per-flow caps (json)"] ?? "",
+    s["per-flow caps"] ?? "",
+    s["max jobs per flow type"] ?? ""
+  );
+  if (perFlowRaw && !/use caf defaults/i.test(perFlowRaw)) {
+    try {
+      patch.max_jobs_per_flow_type = JSON.parse(perFlowRaw);
+    } catch {
+      /* ignore invalid JSON */
+    }
+  }
+
+  return Object.keys(patch).length > 0 ? patch : null;
+}
+
+function pickProductField(
+  p: Record<string, string>,
+  ...labels: string[]
+): string {
+  for (const label of labels) {
+    const v = p[label];
+    if (v && !isGapValue(v) && v.trim().toLowerCase() !== "n/a") return v.trim();
+  }
+  return "";
+}
+
 function buildProductPatch(sections: ReturnType<typeof parseOnboardingPack>["sections"]): Record<string, unknown> {
+  const p = sections.product ?? {};
   const b = sections.brand_snapshot ?? {};
   const r = sections.research ?? {};
+  const hasDedicated = Object.keys(p).length > 0;
+
   return {
-    product_name: firstNonEmpty(b["product/app name"] ?? "", b["product or app name"] ?? "", b["display name"] ?? ""),
-    product_url: firstNonEmpty(b["website"] ?? "", b["website / product url"] ?? ""),
-    one_liner: b["description"] ?? "",
-    competitors: r["competitors"] ?? "",
-    key_features: b["core product capabilities"] ?? "",
+    product_name: firstNonEmpty(
+      pickProductField(p, "product name"),
+      b["product/app name"] ?? "",
+      b["product or app name"] ?? "",
+      b["display name"] ?? ""
+    ),
+    product_category: pickProductField(p, "product category"),
+    product_url: firstNonEmpty(
+      pickProductField(p, "product url"),
+      b["website"] ?? "",
+      b["website / product url"] ?? ""
+    ),
+    one_liner: firstNonEmpty(pickProductField(p, "one-liner", "one liner"), hasDedicated ? "" : b["description"] ?? ""),
+    value_proposition: pickProductField(p, "value proposition"),
+    elevator_pitch: pickProductField(p, "elevator pitch"),
+    primary_audience: pickProductField(p, "primary audience"),
+    audience_pain_points: pickProductField(p, "audience pain points"),
+    audience_desires: pickProductField(p, "audience desires"),
+    use_cases: pickProductField(p, "top use cases / scenarios", "use cases", "top use cases"),
+    key_features: firstNonEmpty(
+      pickProductField(p, "key features"),
+      b["core product capabilities"] ?? ""
+    ),
+    key_benefits: pickProductField(p, "key benefits"),
+    differentiators: pickProductField(p, "differentiators"),
+    proof_points: pickProductField(p, "proof points"),
+    social_proof: pickProductField(p, "social proof"),
+    competitors: firstNonEmpty(pickProductField(p, "competitors"), r["competitors"] ?? ""),
+    comparison_angles: pickProductField(p, "comparison angles"),
+    pricing_summary: pickProductField(p, "pricing summary"),
+    current_offer: pickProductField(p, "current offer"),
+    offer_urgency: pickProductField(p, "urgency", "offer urgency"),
+    guarantee: pickProductField(p, "guarantee"),
+    primary_cta: pickProductField(p, "primary cta"),
+    secondary_cta: pickProductField(p, "secondary cta"),
+    do_say: pickProductField(p, "always say / preferred phrasing", "always say"),
+    dont_say: pickProductField(p, "never say / forbidden phrasing", "never say"),
     taglines: b["existing product language"] ?? b["existing strategic product language"] ?? "",
     keywords: field(sections, "publishing", "hashtag sets"),
-    instagram_handle: firstNonEmpty(b["instagram"] ?? "").replace(/^@/, ""),
     metadata_json: {
+      handles: {
+        instagram: firstNonEmpty(b["instagram handle"] ?? "", b["instagram"] ?? "").replace(/^@/, "") || null,
+        tiktok: firstNonEmpty(b["tiktok handle"] ?? "").replace(/^@/, "") || null,
+        facebook: firstNonEmpty(b["facebook handle / page"] ?? "", b["facebook handle"] ?? "") || null,
+        linkedin: firstNonEmpty(b["linkedin handle / page"] ?? "", b["linkedin handle"] ?? "") || null,
+        reddit: firstNonEmpty(b["reddit username"] ?? "") || null,
+        x_twitter: firstNonEmpty(b["x / twitter handle"] ?? "", b["twitter handle"] ?? "").replace(/^@/, "") || null,
+        youtube: firstNonEmpty(b["youtube handle"] ?? "") || null,
+      },
       other_handles: b["other handles"] ?? null,
-      onboarding_readiness: sections.gaps ? null : null,
+      instagram_handle: firstNonEmpty(b["instagram handle"] ?? "", b["instagram"] ?? "").replace(/^@/, "") || null,
     },
   };
+}
+
+function slugProductKey(raw: string): string {
+  return raw
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 80);
+}
+
+function buildProductBibleJson(
+  sections: ReturnType<typeof parseOnboardingPack>["sections"]
+): Record<string, unknown> | null {
+  const pb = sections.product_bible ?? {};
+  if (Object.keys(pb).length === 0) return null;
+
+  const draft = emptyProductBibleDraft();
+  draft.application_guide.instructions =
+    pickProductField(pb, "instructions") || draft.application_guide.instructions;
+  draft.application_guide.heygen_policy =
+    pickProductField(pb, "heygen / video policy", "heygen / video policy", "heygen policy") || null;
+  draft.application_guide.flux_policy =
+    pickProductField(pb, "flux / image policy", "flux policy", "image policy") || null;
+
+  // Flat module fields: "key", "label", "one-liner", "description" (first module only from field map).
+  // Multi-module tables are pasted in Review; import captures guide + optional first module.
+  const key = pickProductField(pb, "key");
+  const label = pickProductField(pb, "label");
+  if (key && label) {
+    draft.products.push({
+      key: slugProductKey(key) || slugProductKey(label),
+      label,
+      description: pickProductField(pb, "description") || null,
+      one_liner: pickProductField(pb, "one-liner", "one liner") || null,
+      features: [],
+      asset_refs: [],
+    });
+  }
+
+  const hostsRaw = pickProductField(pb, "product ugc hosts");
+  if (hostsRaw) {
+    for (const line of hostsRaw.split("\n")) {
+      const parts = line.split("|").map((x) => x.trim()).filter(Boolean);
+      if (parts.length < 2) continue;
+      const [hostLabel, avatarId, voiceId] = parts.length === 2
+        ? [null, parts[0], parts[1]]
+        : [parts[0], parts[1], parts[2] ?? null];
+      if (!avatarId) continue;
+      draft.heygen_ugc_presenters.push({
+        label: hostLabel,
+        avatar_id: avatarId,
+        voice_id: voiceId,
+        avatar_name: null,
+        voice_name: null,
+        preview_image_url: null,
+      });
+    }
+  }
+
+  const parsed = parseProductBible(draft);
+  if (!parsed) return null;
+  const hasGuide =
+    Boolean(parsed.application_guide.instructions.trim()) ||
+    Boolean(parsed.application_guide.heygen_policy) ||
+    Boolean(parsed.application_guide.flux_policy);
+  if (!hasGuide && parsed.products.length === 0 && parsed.heygen_ugc_presenters.length === 0) {
+    return null;
+  }
+  return parsed as unknown as Record<string, unknown>;
 }
 
 function buildBrandProfileJson(sections: ReturnType<typeof parseOnboardingPack>["sections"], displayName: string): Record<string, unknown> | null {
@@ -242,7 +457,8 @@ function summarizePlan(parsed: ReturnType<typeof parseOnboardingPack>): Record<s
   if (parsed.sections.brand_snapshot) applied.project = 1;
   if (parsed.sections.strategy || parsed.sections.brand_snapshot) applied.strategy = 1;
   if (parsed.sections.voice || parsed.sections.compliance) applied.brand = 1;
-  if (parsed.sections.brand_snapshot || parsed.sections.research) applied.product = 1;
+  if (parsed.sections.product || parsed.sections.brand_snapshot || parsed.sections.research) applied.product = 1;
+  if (parsed.sections.product_bible) applied.product_bible = 1;
   if (parsed.sections.visual) {
     applied.brand_profile = 1;
     applied.brand_bible = 1;
@@ -250,6 +466,8 @@ function summarizePlan(parsed: ReturnType<typeof parseOnboardingPack>): Record<s
   const researchCount = Object.values(parsed.researchLists).reduce((n, xs) => n + (xs?.length ?? 0), 0);
   if (researchCount > 0) applied.research_sources = researchCount;
   if (parsed.sections.formats) applied.platform = 1;
+  if (parsed.sections.platforms) applied.platform = 1;
+  if (parsed.sections.system_limits) applied.system_limits = 1;
   const routeText =
     parsed.sections.formats?.["enabled content routes"] ??
     parsed.sections.formats?.["enabled formats"] ??
@@ -339,19 +557,35 @@ export async function importProjectFromOnboardingPack(
   }
 
   const productPatch = buildProductPatch(parsed.sections);
-  const hasProduct = Object.values(productPatch).some((v) => v != null && String(v).trim());
+  const { metadata_json: _metaIgnore, ...productCols } = productPatch;
+  const hasProduct = Object.values(productCols).some((v) => v != null && String(v).trim().length > 0);
   if (hasProduct) {
     const existing = await getProductProfile(db, project.id);
     const existingMeta =
       existing?.metadata_json && typeof existing.metadata_json === "object" && !Array.isArray(existing.metadata_json)
         ? (existing.metadata_json as Record<string, unknown>)
         : {};
+    const meta = (productPatch.metadata_json as Record<string, unknown> | undefined) ?? {};
     await upsertProductProfile(db, project.id, {
       ...(existing ?? {}),
       ...productPatch,
-      metadata_json: { ...existingMeta, ...(productPatch.metadata_json as Record<string, unknown>) },
+      metadata_json: { ...existingMeta, ...meta },
     });
     result.applied.product = 1;
+  }
+
+  const productBibleJson = buildProductBibleJson(parsed.sections);
+  if (productBibleJson) {
+    await insertProductBibleVersion(db, project.id, productBibleJson, "Onboarding pack import");
+    result.applied.product_bible = 1;
+  }
+
+  const constraintsPatch = buildConstraintsPatch(parsed.sections);
+  if (constraintsPatch) {
+    const existingConstraints = await getConstraints(db, project.id);
+    const merged = mergeConstraintUpdate(existingConstraints, constraintsPatch);
+    await upsertConstraints(db, project.id, merged);
+    result.applied.system_limits = 1;
   }
 
   const profileJson = buildBrandProfileJson(parsed.sections, displayName);
@@ -369,24 +603,30 @@ export async function importProjectFromOnboardingPack(
   const researchCount = await applyResearchLists(db, project.id, parsed.researchLists);
   if (researchCount > 0) result.applied.research_sources = researchCount;
 
-  const formatsText = parsed.sections.formats?.["instagram rules"] ?? "";
+  const formatsText =
+    parsed.sections.platforms?.["formatting rules"] ??
+    parsed.sections.formats?.["instagram rules"] ??
+    "";
   const enabledRoutesText =
     parsed.sections.formats?.["enabled content routes"] ??
     parsed.sections.formats?.["enabled formats"] ??
     "";
-  if (formatsText.trim() || enabledRoutesText.trim()) {
+  const plat = parsed.sections.platforms ?? {};
+  const hasPlatformDetail = Object.keys(plat).length > 0 || formatsText.trim() || enabledRoutesText.trim();
+  if (hasPlatformDetail) {
     await upsertPlatformConstraints(db, project.id, {
-      platform: "Instagram",
-      caption_max_chars: null,
-      hook_must_fit_first_lines: true,
-      hook_max_chars: null,
-      slide_min_chars: null,
-      slide_max_chars: null,
-      slide_min: null,
-      slide_max: null,
-      max_hashtags: null,
-      hashtag_format_rule: null,
-      line_break_policy: null,
+      platform: firstNonEmpty(plat["platform"] ?? "", "Instagram"),
+      caption_max_chars: parseOptionalNumber(plat["caption max chars"] ?? ""),
+      hook_must_fit_first_lines:
+        parseOptionalBool(plat["hook must fit first lines"] ?? "") ?? true,
+      hook_max_chars: parseOptionalNumber(plat["hook max chars"] ?? ""),
+      slide_min_chars: parseOptionalNumber(plat["slide min chars"] ?? ""),
+      slide_max_chars: parseOptionalNumber(plat["slide max chars"] ?? ""),
+      slide_min: parseOptionalNumber(plat["min slides"] ?? ""),
+      slide_max: parseOptionalNumber(plat["max slides"] ?? ""),
+      max_hashtags: parseOptionalNumber(plat["max hashtags"] ?? ""),
+      hashtag_format_rule: firstNonEmpty(plat["hashtag format rule"] ?? "") || null,
+      line_break_policy: firstNonEmpty(plat["line break policy"] ?? "") || null,
       emoji_allowed: true,
       link_allowed: false,
       tag_allowed: true,
@@ -394,12 +634,12 @@ export async function importProjectFromOnboardingPack(
       posting_frequency_limit: null,
       best_posting_window: null,
       notes: enabledRoutesText || null,
-      carousel_headline_font_px: null,
-      carousel_body_font_px: null,
-      carousel_kicker_font_px: null,
-      carousel_cta_font_px: null,
-      carousel_handle_font_px: null,
-      carousel_font_scale: null,
+      carousel_headline_font_px: parseOptionalNumber(plat["carousel headline size (px)"] ?? ""),
+      carousel_body_font_px: parseOptionalNumber(plat["carousel body size (px)"] ?? ""),
+      carousel_kicker_font_px: parseOptionalNumber(plat["carousel kicker size (px)"] ?? ""),
+      carousel_cta_font_px: parseOptionalNumber(plat["carousel cta size (px)"] ?? ""),
+      carousel_handle_font_px: parseOptionalNumber(plat["carousel handle size (px)"] ?? ""),
+      carousel_font_scale: parseOptionalNumber(plat["carousel font scale"] ?? ""),
     });
     result.applied.platform = 1;
   }

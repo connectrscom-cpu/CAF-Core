@@ -21,6 +21,7 @@ import {
 import { ensureHookFirstVideoInPayload } from "./hook-first-video-prep.js";
 import { createUploadSoraSceneClip } from "./sora-scene-clips.js";
 import {
+  applyHeygenAvatarFromSheetConfig,
   applyHeygenEnvAvatarDefaults,
   buildHeyGenRequestBody,
   buildHeyGenVideoAgentRequestBody,
@@ -71,14 +72,19 @@ function buildHookClipAgentPrompt(
   hookScenePrompt: string,
   hookLine: string,
   durationSec: number,
-  hookAudioDirection?: string | null
+  hookAudioDirection?: string | null,
+  voiceId?: string | null
 ): string {
   const line = hookLine.trim();
   const sfx = String(hookAudioDirection ?? "").trim();
+  const voice = String(voiceId ?? "").trim();
   const audioLines = line
     ? [
         "AUDIO / VO (required — must be audible and engaging, not silent)",
         `- Deliver this hook line as off-screen narrator or in-scene vocal reaction (no on-screen talking head): "${line}"`,
+        voice
+          ? `- Use the assigned brand voice_id for this VO (must match the presenter segment that follows): ${voice}`
+          : "- Match a clear, brand-ready narrator voice that can continue into a presenter segment",
         "- Layer cinematic SFX and ambient sound that match the action (impacts, environment, texture)",
         sfx ? `- Sound direction: ${sfx}` : "",
         "- Mix for mobile playback — voice + SFX clear in the first second",
@@ -86,8 +92,9 @@ function buildHookClipAgentPrompt(
     : [
         "AUDIO (required — must be audible and engaging, not silent)",
         "- Cinematic SFX, diegetic sounds, and/or a brief off-screen exclamation tied to the visual beat",
+        voice ? `- Prefer assigned brand voice_id when any VO is spoken: ${voice}` : "",
         sfx ? `- Sound direction: ${sfx}` : "- Visceral ambient bed plus a punchy impact on the pattern-interrupt moment",
-      ];
+      ].filter(Boolean);
 
   return [
     "CAF HOOK CLIP BRIEF",
@@ -110,6 +117,66 @@ function buildHookClipAgentPrompt(
     "FINAL CHECK",
     "- Single continuous hook moment with a clear audio hook; end on a beat that cuts into a presenter segment",
   ].join("\n");
+}
+
+const HOOK_FIRST_BODY_BROLL_DIRECTION =
+  "Hybrid avatar delivery: intercut presenter A-roll with supportive B-roll that illustrates each spoken beat — not a static talking-head-only take.";
+
+function trimId(v: unknown): string | undefined {
+  if (v == null) return undefined;
+  const s = String(v).trim();
+  return s === "" ? undefined : s;
+}
+
+/**
+ * Resolve the same avatar+voice the body Video Agent will use (task_id seed), so the hook
+ * opener VO can match before the body segment is submitted.
+ */
+async function resolveHookFirstBodyPresenter(
+  config: AppConfig,
+  db: Pool,
+  job: HookFirstJob,
+  bodyLane: ReturnType<typeof resolveHookFirstBodyLane>
+): Promise<{ voice_id?: string; avatar_id?: string }> {
+  const bodyFlowType = hookFirstBodyFlowType(bodyLane);
+  const rows = await listHeygenConfig(db, job.project_id);
+  const gen = pickGeneratedOutputOrEmpty(job.generation_payload);
+  const renderMode = resolveHeygenRenderMode(
+    bodyFlowType,
+    job.generation_payload.render_mode ?? gen.render_mode ?? gen.production_route
+  );
+  const merged = mergeHeygenConfigForJob(rows, job.platform, bodyFlowType, renderMode);
+  applyHeygenEnvAvatarDefaults(merged, config);
+  applyHeygenAvatarFromSheetConfig(merged, {
+    flowType: bodyFlowType,
+    pickSeed: job.task_id,
+  });
+
+  const override = job.generation_payload.heygen_request as Record<string, unknown> | undefined;
+  const voiceFromOverride =
+    trimId(override?.voice_id) ?? trimId(override?.voice) ?? trimId(override?.default_voice);
+  const avatarFromOverride = trimId(override?.avatar_id);
+
+  const ch = merged.character;
+  const cr = ch && typeof ch === "object" && !Array.isArray(ch) ? (ch as Record<string, unknown>) : null;
+  const avatar_id =
+    avatarFromOverride ??
+    trimId(cr?.avatar_id) ??
+    trimId(merged.avatar_id) ??
+    trimId(merged.prompt_avatar_id);
+
+  const voice_id =
+    voiceFromOverride ??
+    trimId(merged.voice_id) ??
+    trimId(merged.voice) ??
+    trimId(merged.default_voice) ??
+    trimId(merged.default_voice_id) ??
+    trimId(merged.script_voice_id) ??
+    trimId(cr?.voice_id) ??
+    trimId(cr?.voice) ??
+    trimId(config.HEYGEN_DEFAULT_VOICE_ID);
+
+  return { voice_id, avatar_id };
 }
 
 function heygenSegmentProgress(
@@ -183,17 +250,20 @@ async function renderHookClipHeyGen(
   hookScenePrompt: string,
   hookLine: string,
   durationSec: number,
-  hookAudioDirection?: string | null
+  hookAudioDirection?: string | null,
+  voiceId?: string | null
 ): Promise<string> {
   const apiKey = config.HEYGEN_API_KEY?.trim();
   if (!apiKey) throw new Error("HEYGEN_API_KEY required for hook clip (provider=heygen)");
 
   /** Compact Video Agent brief — cinematic hook with spoken line + SFX (not the full 12s body production brief). */
   const body: Record<string, unknown> = {
-    prompt: buildHookClipAgentPrompt(hookScenePrompt, hookLine, durationSec, hookAudioDirection),
+    prompt: buildHookClipAgentPrompt(hookScenePrompt, hookLine, durationSec, hookAudioDirection, voiceId),
     orientation: "portrait",
     duration_sec: durationSec,
   };
+  const voice = String(voiceId ?? "").trim();
+  if (voice) body.voice_id = voice;
 
   const { videoUrl } = await runHeygenVideoWithBody(
     config,
@@ -228,7 +298,8 @@ async function resolveHookClipUrl(
   hookScenePrompt: string,
   hookLine: string,
   durationSec: number,
-  hookAudioDirection?: string | null
+  hookAudioDirection?: string | null,
+  voiceId?: string | null
 ): Promise<string> {
   const existing = String(gen.hook_clip_url ?? "").trim();
   if (existing) return existing;
@@ -238,6 +309,7 @@ async function resolveHookClipUrl(
     status: "in_progress",
     phase: "hook_clip",
     hook_clip_provider: hookClipProvider(config),
+    ...(voiceId ? { hook_voice_id: voiceId } : {}),
   });
 
   const rs = await loadJobRenderState(db, job.id);
@@ -261,7 +333,16 @@ async function resolveHookClipUrl(
 
   return provider === "sora"
     ? await renderHookClipSora(config, db, job, hookScenePrompt, hookLine, durationSec)
-    : await renderHookClipHeyGen(config, db, job, hookScenePrompt, hookLine, durationSec, hookAudioDirection);
+    : await renderHookClipHeyGen(
+        config,
+        db,
+        job,
+        hookScenePrompt,
+        hookLine,
+        durationSec,
+        hookAudioDirection,
+        voiceId
+      );
 }
 
 async function resolveBodyVideoUrl(
@@ -269,7 +350,8 @@ async function resolveBodyVideoUrl(
   db: Pool,
   job: HookFirstJob,
   gen: Record<string, unknown>,
-  bodyLane: ReturnType<typeof resolveHookFirstBodyLane>
+  bodyLane: ReturnType<typeof resolveHookFirstBodyLane>,
+  presenter?: { voice_id?: string; avatar_id?: string }
 ): Promise<string> {
   const existing = String(gen.body_video_url ?? "").trim();
   if (existing) return existing;
@@ -303,7 +385,7 @@ async function resolveBodyVideoUrl(
     return resumed.videoUrl;
   }
 
-  return renderBodyHeyGen(config, db, job, gen, bodyLane);
+  return renderBodyHeyGen(config, db, job, gen, bodyLane, presenter);
 }
 
 async function renderBodyHeyGen(
@@ -311,7 +393,8 @@ async function renderBodyHeyGen(
   db: Pool,
   job: HookFirstJob,
   gen: Record<string, unknown>,
-  bodyLane: ReturnType<typeof resolveHookFirstBodyLane>
+  bodyLane: ReturnType<typeof resolveHookFirstBodyLane>,
+  presenter?: { voice_id?: string; avatar_id?: string }
 ): Promise<string> {
   const apiKey = config.HEYGEN_API_KEY?.trim();
   if (!apiKey) throw new Error("HEYGEN_API_KEY not configured");
@@ -328,7 +411,13 @@ async function renderBodyHeyGen(
     },
     { ...gen }
   );
-  const bodyGen = enforced.gen;
+  const bodyGen: Record<string, unknown> = { ...enforced.gen };
+  const existingVisual = String(bodyGen.visual_direction ?? "").trim();
+  if (!/b-?roll|hybrid|intercut/i.test(existingVisual)) {
+    bodyGen.visual_direction = existingVisual
+      ? `${existingVisual}\n${HOOK_FIRST_BODY_BROLL_DIRECTION}`
+      : HOOK_FIRST_BODY_BROLL_DIRECTION;
+  }
 
   const rows = await listHeygenConfig(db, job.project_id);
   const renderMode = resolveHeygenRenderMode(
@@ -337,7 +426,15 @@ async function renderBodyHeyGen(
   );
   const merged = mergeHeygenConfigForJob(rows, job.platform, bodyFlowType, renderMode);
   applyHeygenEnvAvatarDefaults(merged, config);
-  const override = job.generation_payload.heygen_request as Record<string, unknown> | undefined;
+  const baseOverride = job.generation_payload.heygen_request as Record<string, unknown> | undefined;
+  const override: Record<string, unknown> = { ...(baseOverride ?? {}) };
+  if (presenter?.voice_id) {
+    override.voice_id = presenter.voice_id;
+    override.voice = presenter.voice_id;
+  }
+  if (presenter?.avatar_id && bodyLane === "prompt_avatar") {
+    override.avatar_id = presenter.avatar_id;
+  }
 
   let postPath: HeygenGeneratePath = resolveHeygenGeneratePath(bodyFlowType, renderMode);
   let body: Record<string, unknown>;
@@ -351,7 +448,7 @@ async function renderBodyHeyGen(
     });
     body = mapHeyGenV2StyleBodyToV3CreateVideoAvatar(body);
   } else {
-    body = buildHeyGenVideoAgentRequestBody(merged, bodyGen, override, {
+    body = buildHeyGenVideoAgentRequestBody(merged, bodyGen, Object.keys(override).length ? override : undefined, {
       flowType: bodyFlowType,
       taskId: job.task_id,
       platform: job.platform,
@@ -486,6 +583,7 @@ export async function runHookFirstVideoPipeline(
     config.HOOK_FIRST_HOOK_DURATION_SEC
   );
   const bodyLane = resolveHookFirstBodyLane(gen.body_lane ?? gen.video_lane ?? gen.hook_first_body_lane);
+  const presenter = await resolveHookFirstBodyPresenter(config, db, fresh, bodyLane);
 
   let hookClipUrl = await resolveHookClipUrl(
     config,
@@ -495,10 +593,17 @@ export async function runHookFirstVideoPipeline(
     hookScenePrompt,
     hookLine,
     durationSec,
-    hookAudioDirection
+    hookAudioDirection,
+    presenter.voice_id
   );
   if (!String(gen.hook_clip_url ?? "").trim()) {
-    gen = { ...gen, hook_clip_url: hookClipUrl, hook_clip_provider: hookClipProvider(config) };
+    gen = {
+      ...gen,
+      hook_clip_url: hookClipUrl,
+      hook_clip_provider: hookClipProvider(config),
+      ...(presenter.voice_id ? { hook_voice_id: presenter.voice_id } : {}),
+      ...(presenter.avatar_id ? { body_avatar_id: presenter.avatar_id } : {}),
+    };
     payload.generated_output = gen;
     await persistHookFirstState(db, fresh.id, payload, {
       provider: "hook-first-video",
@@ -509,9 +614,15 @@ export async function runHookFirstVideoPipeline(
     });
   }
 
-  let bodyVideoUrl = await resolveBodyVideoUrl(config, db, fresh, gen, bodyLane);
+  let bodyVideoUrl = await resolveBodyVideoUrl(config, db, fresh, gen, bodyLane, presenter);
   if (!String(gen.body_video_url ?? "").trim()) {
-    gen = { ...gen, body_video_url: bodyVideoUrl, body_lane: bodyLane };
+    gen = {
+      ...gen,
+      body_video_url: bodyVideoUrl,
+      body_lane: bodyLane,
+      ...(presenter.voice_id ? { body_voice_id: presenter.voice_id } : {}),
+      ...(presenter.avatar_id ? { body_avatar_id: presenter.avatar_id } : {}),
+    };
     payload.generated_output = gen;
     await persistHookFirstState(db, fresh.id, payload, {
       provider: "hook-first-video",
@@ -562,6 +673,8 @@ export async function runHookFirstVideoPipeline(
       body_video_url: bodyVideoUrl,
       body_lane: bodyLane,
       hook_duration_sec: durationSec,
+      hook_voice_id: presenter.voice_id ?? null,
+      body_avatar_id: presenter.avatar_id ?? null,
       spoken_script_preview: extractSpokenScriptText(gen, 1).slice(0, 500),
     },
   });

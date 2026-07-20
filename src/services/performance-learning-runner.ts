@@ -9,6 +9,11 @@ import {
   analyzePerformanceAnalysis,
   type PerformanceAnalysisResult,
 } from "./performance-learning.js";
+import {
+  synthesizePerformanceDriversWithLlm,
+  type PerformanceDriverResult,
+} from "./performance-driver-synthesis.js";
+import type { AppConfig } from "../config.js";
 import { emitGlobalLearningObservation } from "./global-learning-observe.js";
 
 export type PerformanceLearningTrigger = "manual" | "metric_ingest" | "outcome_stabilized";
@@ -18,11 +23,18 @@ export interface PerformanceLearningOpts {
   window_days?: number;
   auto_create_rules?: boolean;
   emit_global_observation?: boolean;
+  /** Run the OpenAI content-feature contrast (top vs bottom performers). Needs config. */
+  run_llm_synthesis?: boolean;
+  /** Mint pending GENERATION_GUIDANCE rules from LLM recommended guidance (max 3). */
+  mint_llm_guidance_rules?: boolean;
+  /** Required when run_llm_synthesis is true. */
+  config?: AppConfig;
 }
 
 export interface PerformanceLearningRunResult extends PerformanceAnalysisResult {
   trigger: PerformanceLearningTrigger;
   global_observation_emitted: boolean;
+  llm_driver_synthesis?: PerformanceDriverResult | null;
 }
 
 export async function runPerformanceLearning(
@@ -43,6 +55,14 @@ export async function runPerformanceLearning(
     windowDays,
     autoCreate
   );
+
+  let llmDriverSynthesis: PerformanceDriverResult | null = null;
+  if (opts?.run_llm_synthesis && opts.config) {
+    llmDriverSynthesis = await synthesizePerformanceDriversWithLlm(db, opts.config, projectId, projectSlug, {
+      windowDays,
+      mint_pending_rules: opts.mint_llm_guidance_rules === true,
+    });
+  }
 
   let globalEmitted = false;
   if (emitGlobal) {
@@ -97,6 +117,7 @@ export async function runPerformanceLearning(
     ...result,
     trigger,
     global_observation_emitted: globalEmitted,
+    llm_driver_synthesis: llmDriverSynthesis,
   };
 }
 

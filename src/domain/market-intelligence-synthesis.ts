@@ -7,6 +7,7 @@ import { normalizeHookType } from "./hook-type-normalize.js";
 import { pickTopPerformerKnowledgeFromDerivedGlobals } from "./signal-pack-top-performer-knowledge.js";
 import {
   buildLinkedInMarketIntelligence,
+  buildLinkedInResearchStatBuckets,
   type LinkedInMarketIntelligenceV1,
 } from "./linkedin-intelligence.js";
 import type { LinkedInTargetingProfile } from "./linkedin-targeting-profile.js";
@@ -54,6 +55,12 @@ export interface ResearchStatsV1 {
   platforms: ResearchStatBucketV1[];
   themes: ResearchStatBucketV1[];
   distinct_creators: number;
+  /** Person-first LinkedIn snapshot — job titles observed in the window. */
+  job_roles?: ResearchStatBucketV1[];
+  /** Person-first LinkedIn snapshot — companies attributed on posts. */
+  companies?: ResearchStatBucketV1[];
+  /** When `linkedin`, Research snapshot UI uses roles/topics/companies instead of formats/emotions/hooks. */
+  lens?: "meta" | "linkedin";
 }
 
 export interface CustomLabelStatV1 {
@@ -978,30 +985,54 @@ export function buildMarketIntelligenceV1(input: {
     ...opportunities,
   ]);
 
-  const research_stats = buildResearchStats(input.insightRows);
+  const research_stats_base = buildResearchStats(input.insightRows);
   const columnLabels = input.insight_column_labels ?? null;
   const custom_label_stats = buildCustomLabelStats(input.insightRows, columnLabels);
   const hooks_digest = buildHooksDigest(hooks, hookRows);
 
+  const linkedinRows = input.insightRows.map((r) => ({
+    insights_id: r.insights_id,
+    evidence_kind: r.evidence_kind,
+    pre_llm_score: r.pre_llm_score,
+    why_it_worked: r.why_it_worked,
+    hook_text: r.hook_text,
+    custom_label_1: r.custom_label_1,
+    custom_label_2: r.custom_label_2,
+    custom_label_3: r.custom_label_3,
+    creator: r.creator,
+    source_url: r.source_url,
+    evidence_payload: r.evidence_payload ?? null,
+  }));
+
   const linkedin = buildLinkedInMarketIntelligence({
-    rows: input.insightRows.map((r) => ({
-      insights_id: r.insights_id,
-      evidence_kind: r.evidence_kind,
-      pre_llm_score: r.pre_llm_score,
-      why_it_worked: r.why_it_worked,
-      hook_text: r.hook_text,
-      custom_label_1: r.custom_label_1,
-      custom_label_2: r.custom_label_2,
-      custom_label_3: r.custom_label_3,
-      creator: r.creator,
-      source_url: r.source_url,
-      evidence_payload: r.evidence_payload ?? null,
-    })),
+    rows: linkedinRows,
     targeting: input.linkedin_targeting ?? null,
   });
 
   const linkedinOnly =
     input.insightRows.length > 0 && input.insightRows.every((r) => /linkedin/i.test(r.evidence_kind));
+
+  let research_stats: ResearchStatsV1 = research_stats_base;
+  if (linkedinOnly) {
+    const liBuckets = buildLinkedInResearchStatBuckets(linkedinRows);
+    const topicThemes =
+      linkedin?.weekly_topics.map((t) => ({
+        key: t.title,
+        count: t.evidence_count,
+        evidence_urls: undefined as string[] | undefined,
+        source_insight_ids: t.source_insight_ids.slice(0, 48),
+      })) ?? [];
+    research_stats = {
+      ...research_stats_base,
+      formats: [],
+      hook_types: [],
+      emotions: [],
+      themes: topicThemes.length ? topicThemes : research_stats_base.themes,
+      job_roles: liBuckets.job_roles,
+      companies: liBuckets.companies,
+      lens: "linkedin",
+    };
+  }
 
   let executive_summary = buildExecutiveSummary(allPatterns, media_lanes, research_stats);
   if (linkedin && linkedinOnly) {

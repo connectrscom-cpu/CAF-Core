@@ -53,6 +53,11 @@ export const signalPackIdeaSchema = z.object({
   video_style: videoExecutionProfileSchema.optional(),
   product_angle: productAngleSchema.optional(),
   cta_class: z.enum(["engage", "educate", "product_awareness", "soft_convert"]).optional(),
+
+  /** Explicit generation route when the marketer picks a destination (manual ideas, cart stamps). */
+  target_flow_type: z.string().min(1).max(80).optional(),
+  /** Provenance for Ideas board / LLM-generated rows. */
+  source: z.enum(["manual", "llm", "import"]).optional(),
 });
 
 export type SignalPackIdeaV2 = z.infer<typeof signalPackIdeaSchema>;

@@ -1,9 +1,11 @@
 "use client";
 
+import { AuthAccountMenu } from "@/components/AuthAccountMenu";
 import { ReviewNavLink } from "@/components/ReviewNavLink";
 import { usePathname } from "next/navigation";
 import { BrandSwitcher } from "@/components/marketer/BrandSwitcher";
 import { ChromePanelToggle } from "@/components/ChromePanelToggle";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { ContentCartBadge } from "@/components/marketer/ContentCartDrawer";
 import { useReviewProject } from "@/components/ReviewProjectContext";
 import { useReviewChromeLayout } from "@/lib/review-chrome-layout";
@@ -35,7 +37,7 @@ const OPERATOR_NAV = [
   { href: "/settings/renderer", label: OPERATOR_LABELS.renderer, icon: SettingsIcon },
 ];
 
-export function MarketerSidebar() {
+export function MarketerSidebar({ mobileDrawerOpen = false }: { mobileDrawerOpen?: boolean }) {
   const pathname = usePathname();
   const searchParams = clientSearchParams(useClientSearchQuery());
   const { ready, activeBrandSlug, inBrandContext, navHref } = useReviewProject();
@@ -52,15 +54,26 @@ export function MarketerSidebar() {
   const brandItems = activeBrandSlug ? brandNavItems(activeBrandSlug) : [];
 
   return (
-    <aside className="sidebar sidebar--marketer" data-agent-id="sidebar">
+    <aside
+      id="review-sidebar-nav"
+      className="sidebar sidebar--marketer"
+      data-agent-id="sidebar"
+      role={mobileDrawerOpen ? "dialog" : undefined}
+      aria-modal={mobileDrawerOpen || undefined}
+      aria-label="Navigation"
+    >
       <div className="sidebar-brand sidebar-brand--row">
         <ReviewNavLink href="/workspace" className="sidebar-brand-link">
           <h1>CAF</h1>
           <span>Content workspace</span>
         </ReviewNavLink>
-        {!embeddedInAdmin ? (
-          <ChromePanelToggle expanded onClick={toggleSidebar} title="Hide navigation" />
-        ) : null}
+        <div className="sidebar-brand-actions">
+          <AuthAccountMenu />
+          <ThemeToggle />
+          {!embeddedInAdmin ? (
+            <ChromePanelToggle expanded onClick={toggleSidebar} title="Hide navigation" />
+          ) : null}
+        </div>
       </div>
 
       <div className="sidebar-project-panel sidebar-brand-panel">
@@ -77,6 +90,14 @@ export function MarketerSidebar() {
           >
             <HomeIcon />
             {MARKETER_LABELS.brands}
+          </ReviewNavLink>
+          <ReviewNavLink
+            href={navHref("/account")}
+            className={`sidebar-link ${pathname.startsWith("/account") ? "active" : ""}`}
+            data-agent-id="nav-account"
+          >
+            <ProfileIcon />
+            Account & invites
           </ReviewNavLink>
         </div>
 

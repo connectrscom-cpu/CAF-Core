@@ -59,7 +59,7 @@ export interface CarouselLivePreviewOptions {
   layoutRevisionKey?: number;
   /** Bumped when brand/typography styling changes (logo, frame, palette, px). */
   stylingRevisionKey?: string;
-  logoOverlay?: { url: string; position?: string };
+  logoOverlay?: { url: string; position?: string; asset_id?: string };
   frameOverlay?: { url: string; asset_id?: string };
   projectSlug?: string;
 }
@@ -930,7 +930,7 @@ export function CarouselSlider({
 
               <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--border)" }}>
                   <div className="filter-label" style={{ marginBottom: 8 }}>Template microcopy</div>
-                  <div className="grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <div className="mobile-stack-grid" style={{ gap: 10 }}>
                   {slide.type === "cover" && (
                     <div>
                       <label className="filter-label">Brand word</label>
@@ -1049,7 +1049,7 @@ export function CarouselSlider({
 
               <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--border)" }}>
                   <div className="filter-label" style={{ marginBottom: 8 }}>Template microcopy</div>
-                  <div className="grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <div className="mobile-stack-grid" style={{ gap: 10 }}>
                   <div>
                     <label className="filter-label">Kicker</label>
                     <input

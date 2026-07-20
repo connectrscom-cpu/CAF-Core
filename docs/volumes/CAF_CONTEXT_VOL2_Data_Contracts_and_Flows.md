@@ -1,11 +1,13 @@
 # CAF Current State Context Pack — Data Contracts and Flows
 
-**Volume 2 of 4** | Generated 2026-07-10 | Full pack: docs/CAF_CURRENT_STATE_CONTEXT_PACK.md
+**Volume 2 of 4** | Regenerated 2026-07-16 from `docs/CAF_CURRENT_STATE_CONTEXT_PACK.md`  
+**Planning LLMs:** `docs/FABLE_IMPROVEMENT_BRIEFING.md`
 
 ---
+
 ## 5. Database schema map
 
-Grouped by domain (79 migrations through `078_brand_bibles.sql`):
+Grouped by domain (**83** migrations through `082_flow_vid_ugc.sql`; notable recent: `081_text_content_flows.sql`, `082_flow_vid_ugc.sql`, prior BVS `078`):
 
 ### Core pipeline
 `projects`, `runs`, `content_jobs`, `job_drafts`, `assets`, `job_state_transitions`, `signal_packs`, `signal_pack_ideas`, `signal_pack_selected_ideas`, `ideas`, `idea_grounding_insights`
@@ -135,8 +137,33 @@ Default `CAF_REQUIRE_HUMAN_REVIEW_AFTER_QC=true` remaps clean QC to `HUMAN_REVIE
 
 ## 8. Flow types and content formats
 
-### Canonical text/copy flows (`canonical-flow-types.ts`)
+### Content routes (marketer lanes)
+
+Human-facing **lanes** toggle `allowed_flow_types` + idea-generation quotas together.
+
+- **Source of truth:** `src/domain/content-routes.ts` (+ apply helper `src/services/content-routes-apply.ts`)
+- **Catalog doc:** `docs/CONTENT_ROUTES.md`
+- **Setup:** chosen in `docs/PROJECT_SETUP_CHECKLIST.md` § Content routes; editable later in Review Brand profile → Content routes (`ContentRoutesEditor.tsx`)
+- **Groups:** `carousel` | `video` | `text`
+- When a lane is **off:** related flows `enabled=false`, related idea buckets set to **0**, Ideas/cart hide that lane
+
+Key lane ids: `niche_carousels`, `product_carousels`, `visual_first_carousels`, `top_performer_mimic_carousel`, `why_mimic_carousels`, `avatar_video_script`, `avatar_video_prompt`, `video_no_avatar`, `hook_first_video`, `ugc_video`, `product_marketing_videos`, `linkedin_posts`, `reddit_posts`, `instagram_threads`.
+
+`FLOW_CAROUSEL` stays enabled if **either** niche or product carousels is on.
+
+### Canonical utility / copy flows (`canonical-flow-types.ts`)
 `FLOW_CAROUSEL`, `FLOW_ANGLE`, `FLOW_STRUCTURE`, `FLOW_CTA`, `FLOW_HOOKS`, `FLOW_TEXT`
+
+### Text content flows (`text-content-flow-types.ts`, migration 081)
+
+| Flow | Platform | Idea format | Status |
+|------|----------|-------------|--------|
+| `FLOW_LINKEDIN_TEXT_POST` | LinkedIn | `linkedin_text` | Newer production |
+| `FLOW_LINKEDIN_DOCUMENT_POST` | LinkedIn | `linkedin_document` | Production (earlier path) |
+| `FLOW_REDDIT_POST` | Reddit | `reddit_post` | Newer production |
+| `FLOW_INSTAGRAM_THREAD` | Instagram | `instagram_thread` | Newer production |
+
+Domain helpers also live in `linkedin-text-post.ts`, `reddit-post.ts`, `instagram-thread.ts`. Format routing: `decision_engine/format-routing.ts` (+ `format-routing.text-flows.test.ts`).
 
 ### Video flows
 | Flow | Status | Generate | Render | Review |
@@ -144,8 +171,12 @@ Default `CAF_REQUIRE_HUMAN_REVIEW_AFTER_QC=true` remaps clean QC to `HUMAN_REVIE
 | `FLOW_VID_SCRIPT` | Production | OpenAI script | HeyGen | Video edits panel |
 | `FLOW_VID_PROMPT` | Production | OpenAI prompt | HeyGen Video Agent | HeyGenReviewEdits |
 | `FLOW_VID_PROMPT_NO_AVATAR` | Production | OpenAI | HeyGen no-avatar | HeyGenReviewEdits |
+| `FLOW_VID_HOOK_FIRST` | Production | Hook-first pack | HeyGen / resume-safe render | Video review |
+| `FLOW_VID_UGC` | Newer (migration 082) | Peer-voice `spoken_script` | HeyGen script-led UGC host pool | Video review |
 | `FLOW_VID_SCENES` / `FLOW_SCENE_ASSEMBLY` | Provider-dependent | Scene scripts | Sora clips + ffmpeg concat | Video review |
 | `FLOW_PRODUCT_*` (6 types) | Production | Product prompts | HeyGen | Video review |
+
+UGC domain: `src/domain/ugc-video.ts`. Hosts come from brand/product bible presenter pools.
 
 ### Carousel flows
 | Flow | Status | Notes |
@@ -169,9 +200,9 @@ Registered in flow engine; **blocked at LLM** with `PRODUCT_IMAGE_FLOW_NOT_READY
 |-------------|--------------|
 | Mimic carousel | `MIMIC_IMAGE_ENABLED=1`, provider API key, archived reference media (except new_visual) |
 | New visual | BVS recommended; `analysis_t2i` input mode |
-| HeyGen | `HEYGEN_API_KEY`, project `heygen_config` |
+| HeyGen / UGC | `HEYGEN_API_KEY`, project `heygen_config`, UGC host pool in bibles |
 | Scene assembly | `OPENAI_API_KEY`, `SCENE_ASSEMBLY_CLIP_PROVIDER`, `VIDEO_ASSEMBLY_BASE_URL` |
 | Standard carousel | `RENDERER_BASE_URL`, templates |
+| Text lanes | Prompts/schemas per flow; publish path per platform maturity |
 
 ---
-

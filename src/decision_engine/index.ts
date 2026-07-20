@@ -10,8 +10,14 @@ import {
   listActiveSuppressionRules,
 } from "../repositories/core.js";
 import { getLearningRulesForPlanning } from "../services/learning-rule-selection.js";
+import { insertPlanningAttributionBatch } from "../repositories/learning-evidence.js";
 import { evaluateKillSwitches } from "./kill_switches.js";
-import { applyLearningBoosts, dedupeByKey, sortByScoreDesc } from "./ranking_rules.js";
+import {
+  applyLearningBoostsWithTrace,
+  dedupeByKey,
+  sortByScoreDesc,
+  type LearningBoostTraceEntry,
+} from "./ranking_rules.js";
 import { defaultWeights, scoreCandidate } from "./scoring.js";
 import { resolvePlanningCaps } from "./planning-caps.js";
 import {
@@ -143,7 +149,37 @@ export async function decideGenerationPlan(
   const weights = defaultWeights(config);
 
   let scored: ScoredCandidate[] = req.candidates.map((c) => scoreCandidate(c, weights));
-  scored = applyLearningBoosts(scored, learningRules);
+  const boostResult = applyLearningBoostsWithTrace(scored, learningRules);
+  scored = boostResult.candidates;
+  const boostTraceByCandidate = new Map<string, LearningBoostTraceEntry>(
+    boostResult.trace.map((t) => [t.candidate_id, t])
+  );
+
+  /** Persist planning attribution for selected candidates (fire-and-forget). */
+  const recordPlanningAttribution = (selectedJobs: GenerationPlanResult["selected"]) => {
+    if (req.dry_run || boostTraceByCandidate.size === 0) return;
+    const seen = new Set<string>();
+    const entries: Array<{
+      candidate_id: string;
+      flow_type: string | null;
+      platform: string | null;
+      applied_rule_ids: string[];
+    }> = [];
+    for (const job of selectedJobs) {
+      if (seen.has(job.candidate_id)) continue;
+      seen.add(job.candidate_id);
+      const trace = boostTraceByCandidate.get(job.candidate_id);
+      if (!trace) continue;
+      entries.push({
+        candidate_id: job.candidate_id,
+        flow_type: job.flow_type ?? null,
+        platform: job.platform ?? null,
+        applied_rule_ids: trace.applied_rule_ids,
+      });
+    }
+    if (entries.length === 0) return;
+    void insertPlanningAttributionBatch(db, project.id, req.run_id ?? null, entries).catch(() => {});
+  };
 
   const dropped: GenerationPlanResult["dropped_candidates"] = [];
   const flowOk = (flow: string) => !kill.blockedFlowTypes.has(flow);
@@ -217,6 +253,7 @@ export async function decideGenerationPlan(
         outputSnapshot: result,
       });
     }
+    recordPlanningAttribution(selected);
     return result;
   }
 
@@ -328,5 +365,6 @@ export async function decideGenerationPlan(
     });
   }
 
+  recordPlanningAttribution(selected);
   return result;
 }

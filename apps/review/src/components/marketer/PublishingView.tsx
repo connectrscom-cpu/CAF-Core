@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { humanizePublishStatus } from "@/lib/marketer/language";
 import type { PublishStatus, ScheduledPost } from "@/lib/marketer/types";
+import { LoadingWithTip, PageTip } from "@/components/marketer/PageTip";
 
 interface PublishingViewProps {
   slug: string;
@@ -52,12 +53,13 @@ export function PublishingView({ slug }: PublishingViewProps) {
     return { scheduled: data.scheduled, published: data.published };
   }, [data]);
 
-  if (loading) return <p className="workspace-muted">Loading publishing…</p>;
+  if (loading) return <LoadingWithTip page="publishing" label="Loading publishing…" />;
   if (error) return <p className="workspace-error">{error}</p>;
   if (!data) return null;
 
   return (
     <div className="publishing-view">
+      <PageTip page="publishing" salt="banner" className="page-tip-banner" />
       <div className="tabs">
         <button type="button" className={`tab ${tab === "ready" ? "active" : ""}`} onClick={() => setTab("ready")}>
           Ready to publish
@@ -100,6 +102,7 @@ export function PublishingView({ slug }: PublishingViewProps) {
                   Browse ideas
                 </Link>
               </div>
+              <PageTip page="publishing" salt="empty" compact />
             </div>
           ) : (
             <div className="publishing-ready-card">
@@ -158,6 +161,7 @@ function PostList({
         <Link href={`/brand/${encodeURIComponent(slug)}/content?status=approved`} className="btn-primary">
           View approved content
         </Link>
+        <PageTip page="publishing" salt="list-empty" compact />
       </div>
     );
   }

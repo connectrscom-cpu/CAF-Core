@@ -43,7 +43,10 @@ export function resolveHookFirstBodyLane(raw: unknown): HookFirstBodyLane {
     .trim()
     .toLowerCase()
     .replace(/-/g, "_");
-  return BODY_LANE_ALIASES[s] ?? "script_avatar";
+  const lane = BODY_LANE_ALIASES[s] ?? "prompt_avatar";
+  // Hook-first body is avatar Video Agent (A-roll + B-roll), not script-led /v3/videos.
+  if (lane === "script_avatar") return "prompt_avatar";
+  return lane;
 }
 
 export function hookFirstBodyFlowType(lane: HookFirstBodyLane): string {
@@ -152,8 +155,8 @@ export const HOOK_FIRST_VIDEO_OUTPUT_ADDENDUM = `Hook-first hybrid video JSON (m
 - Optional \`hook_audio_direction\`: SFX/ambient cues for the hook (e.g. "sizzle, gasp, tense kitchen ambience").
 - \`bridge_line\`: one sentence that **connects** the hook visual to the body (e.g. "And that's exactly why…").
 - \`spoken_script\`: voiceover for the **body segment only** (after the hook). Start with \`bridge_line\` or a natural continuation — do **not** repeat the hook_line verbatim as the opening body VO.
-- \`body_lane\`: one of \`script_avatar\` | \`prompt_avatar\` | \`no_avatar\` — how the body renders in HeyGen (default \`script_avatar\`).
+- \`body_lane\`: \`prompt_avatar\` (default — avatar Video Agent with supportive B-roll) or \`no_avatar\`. Do not use full-script talking-head for the body.
 - \`caption\`, \`hashtags\`, \`cta\` / \`cta_line\`: standard publication fields.
-- Optional \`visual_direction\`, \`on_screen_text\` for the body segment only.
+- Optional \`visual_direction\`, \`on_screen_text\` for the body segment — prefer hybrid avatar A-roll intercut with B-roll that illustrates each beat.
 
 Continuity rule: the hook visual and body script must be about the **same topic**; the bridge must make the handoff feel intentional, not random.`;

@@ -1,5 +1,7 @@
+import { brandAccessDeniedResponse } from "@/lib/brand-access-guard";
 import { NextRequest, NextResponse } from "next/server";
 import {
+  appendSignalPackIdea,
   getMarketIntelligenceForPack,
   getSignalPackForProject,
   listEvidenceInsightsForImport,
@@ -14,6 +16,7 @@ import {
   enrichIdeasWithPreviews,
   toResearchBrief,
   enrichResearchBriefFromScraperRun,
+  toContentIdea,
 } from "@/lib/marketer/idea-adapters";
 import { buildEvidenceThumbnailMap } from "@/lib/marketer/intel-evidence";
 
@@ -61,6 +64,11 @@ async function resolveDisplayName(slug: string): Promise<string> {
 
 export async function GET(req: NextRequest, ctx: Ctx) {
   const { slug } = await ctx.params;
+  {
+    const denied = await brandAccessDeniedResponse(slug);
+    if (denied) return denied;
+  }
+
   if (!slug) return NextResponse.json({ error: "Missing brand" }, { status: 400 });
 
   const displayName = await resolveDisplayName(slug);
@@ -179,4 +187,66 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     briefs,
     sourceWindow,
   });
+}
+
+/**
+ * POST — append a marketer-authored idea (title + concept + destination flow) to a research brief pack.
+ */
+export async function POST(req: NextRequest, ctx: Ctx) {
+  const { slug } = await ctx.params;
+  {
+    const denied = await brandAccessDeniedResponse(slug);
+    if (denied) return denied;
+  }
+
+  if (!slug) return NextResponse.json({ error: "Missing brand" }, { status: 400 });
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await req.json()) as Record<string, unknown>;
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const packId = str(body.packId);
+  const title = str(body.title);
+  const concept = str(body.concept);
+  const targetFlowType = str(body.target_flow_type) || str(body.destination) || str(body.flowType);
+  const platform = str(body.platform);
+  const contentLensRaw = str(body.content_lens).toLowerCase();
+  const content_lens = contentLensRaw === "product" ? ("product" as const) : ("niche" as const);
+
+  if (!packId || packId === "all") {
+    return NextResponse.json(
+      { error: "Select a research brief before adding a manual idea." },
+      { status: 400 }
+    );
+  }
+  if (!title) {
+    return NextResponse.json({ error: "Title is required." }, { status: 400 });
+  }
+  if (!targetFlowType.startsWith("FLOW_")) {
+    return NextResponse.json({ error: "Pick a generation destination." }, { status: 400 });
+  }
+
+  try {
+    const result = await appendSignalPackIdea(slug, packId, {
+      title,
+      concept: concept || undefined,
+      target_flow_type: targetFlowType,
+      platform: platform || undefined,
+      content_lens,
+    });
+    const idea = toContentIdea(result.idea ?? {}, 0);
+    return NextResponse.json({
+      ok: true,
+      idea,
+      ideas_count: result.ideas_count,
+      packId,
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const status = /invalid_destination|title_required|invalid_body|invalid_idea/i.test(msg) ? 400 : 502;
+    return NextResponse.json({ error: msg.slice(0, 400) }, { status });
+  }
 }

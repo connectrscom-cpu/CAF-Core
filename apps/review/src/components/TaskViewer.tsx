@@ -17,6 +17,7 @@ function getVal(row: ReviewQueueRow, key: string): string {
 function VideoWithBrandOverlays({
   src,
   logoUrl,
+  logoPosition = "br",
   frameUrl,
   className,
   style,
@@ -24,6 +25,7 @@ function VideoWithBrandOverlays({
 }: {
   src: string;
   logoUrl?: string;
+  logoPosition?: string;
   frameUrl?: string;
   className?: string;
   style?: React.CSSProperties;
@@ -31,6 +33,9 @@ function VideoWithBrandOverlays({
 }) {
   const showFrame = Boolean(frameUrl?.trim());
   const showLogo = Boolean(logoUrl?.trim());
+  const pos = ["tl", "tr", "bl", "br"].includes(String(logoPosition ?? "").trim())
+    ? String(logoPosition).trim()
+    : "br";
   return (
     <div className={`video-brand-overlay-wrap${className ? ` ${className}` : ""}`} style={style}>
       <video
@@ -46,7 +51,12 @@ function VideoWithBrandOverlays({
       ) : null}
       {showLogo ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={logoUrl} alt="" className="video-brand-overlay-wrap__logo" aria-hidden />
+        <img
+          src={logoUrl}
+          alt=""
+          className={`video-brand-overlay-wrap__logo video-brand-overlay-wrap__logo--${pos}`}
+          aria-hidden
+        />
       ) : null}
     </div>
   );
@@ -81,7 +91,7 @@ export interface TaskViewerProps {
   /** Mimic video: archived top-performer source video for side-by-side review. */
   referenceVideoUrl?: string;
   /** Live CSS preview of brand logo/frame on generated video (before ffmpeg apply). */
-  videoBrandOverlay?: { logoUrl?: string; frameUrl?: string };
+  videoBrandOverlay?: { logoUrl?: string; logoPosition?: string; frameUrl?: string };
   projectHandle?: string;
   caption?: string;
   onCaptionChange?: (value: string) => void;
@@ -337,6 +347,7 @@ export function TaskViewer({
               <VideoWithBrandOverlays
                 src={fullBleedVideoUrl}
                 logoUrl={videoBrandOverlay?.logoUrl}
+                logoPosition={videoBrandOverlay?.logoPosition}
                 frameUrl={videoBrandOverlay?.frameUrl}
                 style={{ width: "100%", maxHeight: "70vh" }}
                 onError={() => setVideoLoadFailed(true)}
@@ -369,6 +380,7 @@ export function TaskViewer({
               <VideoWithBrandOverlays
                 src={fullBleedVideoUrl}
                 logoUrl={videoBrandOverlay?.logoUrl}
+                logoPosition={videoBrandOverlay?.logoPosition}
                 frameUrl={videoBrandOverlay?.frameUrl}
                 style={{ width: "100%", maxHeight: "70vh" }}
                 onError={() => setVideoLoadFailed(true)}
@@ -379,6 +391,7 @@ export function TaskViewer({
           <VideoWithBrandOverlays
             src={fullBleedVideoUrl}
             logoUrl={videoBrandOverlay?.logoUrl}
+            logoPosition={videoBrandOverlay?.logoPosition}
             frameUrl={videoBrandOverlay?.frameUrl}
             style={{ maxHeight: "70vh", width: "100%", borderRadius: 8 }}
             onError={() => setVideoLoadFailed(true)}

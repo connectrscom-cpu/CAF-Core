@@ -2,14 +2,23 @@
 
 import { useCallback, useState } from "react";
 import { CarouselBrandStylingPanel } from "@/components/CarouselBrandStylingPanel";
-import type { BrandSlideFrameOption } from "@/lib/brand-asset-url";
+import type {
+  BrandLogoPosition,
+  BrandSlideFrameOption,
+  BrandSlideLogoOption,
+} from "@/lib/brand-asset-url";
 
 export interface VideoBrandStampControlsProps {
   taskId: string;
   projectSlug: string;
   brandLogoDisplayUrl?: string;
+  brandLogos?: BrandSlideLogoOption[];
   logoEnabled: boolean;
   onLogoEnabledChange: (enabled: boolean) => void;
+  selectedLogoAssetId?: string;
+  onSelectedLogoAssetIdChange?: (assetId: string) => void;
+  logoPosition?: BrandLogoPosition;
+  onLogoPositionChange?: (position: BrandLogoPosition) => void;
   brandFrames?: BrandSlideFrameOption[];
   frameEnabled: boolean;
   onFrameEnabledChange: (enabled: boolean) => void;
@@ -22,8 +31,13 @@ export function VideoBrandStampControls({
   taskId,
   projectSlug,
   brandLogoDisplayUrl = "",
+  brandLogos = [],
   logoEnabled,
   onLogoEnabledChange,
+  selectedLogoAssetId = "",
+  onSelectedLogoAssetIdChange,
+  logoPosition = "br",
+  onLogoPositionChange,
   brandFrames = [],
   frameEnabled,
   onFrameEnabledChange,
@@ -43,6 +57,11 @@ export function VideoBrandStampControls({
     setMessage(null);
     setError(null);
     try {
+      const logo =
+        logoEnabled && brandLogos.length > 0
+          ? brandLogos.find((l) => l.assetId === selectedLogoAssetId) ?? brandLogos[0]
+          : undefined;
+      const logoUrl = logo?.reprintUrl?.trim() || (logoEnabled ? brandLogoDisplayUrl.trim() : "");
       const frame =
         frameEnabled && brandFrames.length > 0
           ? brandFrames.find((f) => f.assetId === selectedFrameAssetId) ?? brandFrames[0]
@@ -55,8 +74,14 @@ export function VideoBrandStampControls({
           project: slug,
           logo_enabled: logoEnabled,
           frame_enabled: frameEnabled,
-          ...(logoEnabled && brandLogoDisplayUrl.trim()
-            ? { logo_overlay: { url: brandLogoDisplayUrl.trim(), position: "br" } }
+          ...(logoEnabled && logoUrl
+            ? {
+                logo_overlay: {
+                  url: logoUrl,
+                  position: logoPosition,
+                  ...(logo?.assetId ? { asset_id: logo.assetId } : {}),
+                },
+              }
             : {}),
           ...(frameEnabled && frame?.reprintUrl?.trim()
             ? { frame_overlay: { url: frame.reprintUrl.trim(), asset_id: frame.assetId } }
@@ -81,13 +106,17 @@ export function VideoBrandStampControls({
     logoEnabled,
     frameEnabled,
     brandLogoDisplayUrl,
+    brandLogos,
+    selectedLogoAssetId,
+    logoPosition,
     brandFrames,
     selectedFrameAssetId,
     onApplied,
   ]);
 
   const hasStampOption =
-    (brandLogoDisplayUrl.trim() && logoEnabled) || (frameEnabled && brandFrames.length > 0);
+    ((brandLogos.length > 0 || brandLogoDisplayUrl.trim()) && logoEnabled) ||
+    (frameEnabled && brandFrames.length > 0);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -106,9 +135,14 @@ export function VideoBrandStampControls({
         onCarouselCtaFontPxChange={() => {}}
         carouselHandleFontPx=""
         onCarouselHandleFontPxChange={() => {}}
+        brandLogos={brandLogos}
         brandLogoDisplayUrl={brandLogoDisplayUrl}
         logoEnabled={logoEnabled}
         onLogoEnabledChange={onLogoEnabledChange}
+        selectedLogoAssetId={selectedLogoAssetId}
+        onSelectedLogoAssetIdChange={onSelectedLogoAssetIdChange}
+        logoPosition={logoPosition}
+        onLogoPositionChange={onLogoPositionChange}
         brandFrames={brandFrames}
         frameEnabled={frameEnabled}
         onFrameEnabledChange={onFrameEnabledChange}

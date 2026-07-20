@@ -215,47 +215,73 @@ interface ApprovedJobRow {
   flow_type: string | null;
   platform: string | null;
   generation_payload: Record<string, unknown>;
+  /** Latest editorial decision (APPROVED for the default lane; REJECTED/NEEDS_EDIT for the failure lane). */
+  decision: string | null;
+  /** Reviewer notes from the latest review (context for the failure lane prompt). */
+  review_notes: string | null;
 }
 
-async function listApprovedJobs(
+const LLM_REVIEW_ALLOWED_DECISIONS = new Set(["APPROVED", "NEEDS_EDIT", "REJECTED"]);
+
+async function listJobsForLlmReview(
   db: Pool,
   projectId: string,
   opts: {
     limit: number;
     taskIds?: string[];
+    /** Latest-decision filter; defaults to approved-only (the original lane). */
+    decisions?: string[];
+    platform?: string | null;
+    flowType?: string | null;
+    /** Latest decision created_at bounds (ISO). */
+    decidedAfter?: string | null;
+    decidedBefore?: string | null;
   }
 ): Promise<ApprovedJobRow[]> {
   const lim = Math.min(Math.max(opts.limit, 1), 50);
+  const decisions = (opts.decisions ?? ["APPROVED"])
+    .map((d) => d.trim().toUpperCase())
+    .filter((d) => LLM_REVIEW_ALLOWED_DECISIONS.has(d));
+  const effectiveDecisions = decisions.length > 0 ? decisions : ["APPROVED"];
+
+  const params: unknown[] = [projectId, effectiveDecisions];
+  const where: string[] = [`j.project_id = $1`, `lr.decision = ANY($2::text[])`];
   if (opts.taskIds && opts.taskIds.length > 0) {
-    return q<ApprovedJobRow>(
-      db,
-      `SELECT j.task_id, j.run_id, j.flow_type, j.platform, j.generation_payload
-       FROM caf_core.content_jobs j
-       LEFT JOIN LATERAL (
-         SELECT decision FROM caf_core.editorial_reviews
-         WHERE task_id = j.task_id AND project_id = j.project_id
-         ORDER BY created_at DESC LIMIT 1
-       ) lr ON true
-       WHERE j.project_id = $1 AND lr.decision = 'APPROVED'
-         AND j.task_id = ANY($2::text[])
-       ORDER BY j.updated_at DESC
-       LIMIT $3`,
-      [projectId, opts.taskIds, lim]
-    );
+    params.push(opts.taskIds);
+    where.push(`j.task_id = ANY($${params.length}::text[])`);
   }
+  if (opts.platform?.trim()) {
+    params.push(opts.platform.trim());
+    where.push(`lower(j.platform) = lower($${params.length})`);
+  }
+  if (opts.flowType?.trim()) {
+    params.push(opts.flowType.trim());
+    where.push(`j.flow_type = $${params.length}`);
+  }
+  if (opts.decidedAfter?.trim()) {
+    params.push(opts.decidedAfter.trim());
+    where.push(`lr.created_at >= $${params.length}::timestamptz`);
+  }
+  if (opts.decidedBefore?.trim()) {
+    params.push(opts.decidedBefore.trim());
+    where.push(`lr.created_at <= $${params.length}::timestamptz`);
+  }
+  params.push(lim);
+
   return q<ApprovedJobRow>(
     db,
-    `SELECT j.task_id, j.run_id, j.flow_type, j.platform, j.generation_payload
+    `SELECT j.task_id, j.run_id, j.flow_type, j.platform, j.generation_payload,
+            lr.decision, lr.notes AS review_notes
      FROM caf_core.content_jobs j
      LEFT JOIN LATERAL (
-       SELECT decision FROM caf_core.editorial_reviews
-       WHERE task_id = j.task_id AND project_id = j.project_id
+       SELECT decision, notes, created_at FROM caf_core.editorial_reviews
+       WHERE task_id = j.task_id AND project_id = j.project_id AND decision IS NOT NULL
        ORDER BY created_at DESC LIMIT 1
      ) lr ON true
-     WHERE j.project_id = $1 AND lr.decision = 'APPROVED'
+     WHERE ${where.join(" AND ")}
      ORDER BY j.updated_at DESC
-     LIMIT $2`,
-    [projectId, lim]
+     LIMIT $${params.length}`,
+    params
   );
 }
 
@@ -280,6 +306,20 @@ export interface RunLlmApprovalReviewParams {
   /** If > 0, skip tasks reviewed in the last N days unless force_rereview. */
   skip_if_reviewed_within_days?: number;
   force_rereview?: boolean;
+  /** Only jobs on this platform (case-insensitive). */
+  platform?: string | null;
+  /** Only jobs with this flow_type (exact). */
+  flow_type?: string | null;
+  /** Only jobs whose latest editorial decision is at/after this ISO instant. */
+  decided_after?: string | null;
+  /** Only jobs whose latest editorial decision is at/before this ISO instant. */
+  decided_before?: string | null;
+  /**
+   * Latest-decision lanes. Default ["APPROVED"] (original behavior). Use
+   * ["REJECTED","NEEDS_EDIT"] for the failure/contrast lane: the reviewer is
+   * told the human verdict and asked what should change upstream.
+   */
+  decisions?: string[];
   /**
    * Max overall score for improvement-rule minting (defaults to DEFAULT_LLM_APPROVAL_MINT_IMPROVE_BELOW).
    * Set lower (e.g. 0.55) to mint only on weaker reviews.
@@ -349,7 +389,15 @@ export async function runLlmApprovalReviewsForProject(
       ? Math.min(1, Math.max(0, params.mint_positive_hints_above_score))
       : DEFAULT_LLM_APPROVAL_MINT_POSITIVE_AT_OR_ABOVE;
 
-  const jobs = await listApprovedJobs(db, projectId, { limit, taskIds: params.task_ids });
+  const jobs = await listJobsForLlmReview(db, projectId, {
+    limit,
+    taskIds: params.task_ids,
+    decisions: params.decisions,
+    platform: params.platform ?? null,
+    flowType: params.flow_type ?? null,
+    decidedAfter: params.decided_after ?? null,
+    decidedBefore: params.decided_before ?? null,
+  });
   const results: LlmApprovalReviewJobResult[] = [];
 
   for (const job of jobs) {
@@ -384,6 +432,7 @@ export async function runLlmApprovalReviewsForProject(
           imagesAvailable,
           textBundle,
           maxTextChars: maxText,
+          reviewContext: { decision: job.decision, notes: job.review_notes },
         }
       );
 
@@ -408,8 +457,12 @@ export async function runLlmApprovalReviewsForProject(
         scores_json: scoresJson,
       } = analysis.derived;
 
+      const jobDecision = (job.decision ?? "APPROVED").trim().toUpperCase();
+      const isFailureLane = jobDecision === "REJECTED" || jobDecision === "NEEDS_EDIT";
+
       const eligible = overall < improveBelow && improvementBullets.length > 0;
-      const positiveEligible = overall >= positiveAtOrAbove && strengths.length > 0;
+      // Never mint "preserve strengths" rules from content humans rejected.
+      const positiveEligible = !isFailureLane && overall >= positiveAtOrAbove && strengths.length > 0;
 
       let minted = false;
       if (eligible) {
@@ -422,11 +475,12 @@ export async function runLlmApprovalReviewsForProject(
           scope_platform: job.platform ?? null,
           action_type: "GENERATION_GUIDANCE",
           action_payload: {
-            guidance_kind: "improvement",
+            guidance_kind: isFailureLane ? "failure_lessons" : "improvement",
             bullets: improvementBullets.slice(0, 8),
             instruction: improvementBullets.slice(0, 5).join(" "),
             source_task_id: job.task_id,
             source_review_id: reviewId,
+            source_decision: jobDecision,
             llm_overall_score: overall,
           },
           confidence: Math.max(0.15, 1 - overall),
@@ -513,6 +567,7 @@ export async function runLlmApprovalReviewsForProject(
           review_id: reviewId,
           overall_score: overall,
           scores: scoresJson,
+          decision: jobDecision,
           strengths,
           weaknesses,
           improvement_bullets: improvementBullets,

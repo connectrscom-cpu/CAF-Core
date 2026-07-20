@@ -11,10 +11,12 @@ function MenuIcon() {
 type ReviewMobileChromeBarProps = {
   onOpenNav: () => void;
   operator: boolean;
+  /** When true, nav drawer is open (used for aria-expanded). */
+  navOpen?: boolean;
 };
 
 /** Fixed top bar on narrow viewports — opens the navigation drawer when the sidebar is minimized. */
-export function ReviewMobileChromeBar({ onOpenNav, operator }: ReviewMobileChromeBarProps) {
+export function ReviewMobileChromeBar({ onOpenNav, operator, navOpen = false }: ReviewMobileChromeBarProps) {
   return (
     <header className="review-mobile-chrome" data-agent-id="mobile-chrome">
       <button
@@ -22,6 +24,8 @@ export function ReviewMobileChromeBar({ onOpenNav, operator }: ReviewMobileChrom
         className="review-mobile-chrome__menu"
         onClick={onOpenNav}
         aria-label="Open navigation"
+        aria-expanded={navOpen}
+        aria-controls="review-sidebar-nav"
         title="Open navigation"
       >
         <MenuIcon />

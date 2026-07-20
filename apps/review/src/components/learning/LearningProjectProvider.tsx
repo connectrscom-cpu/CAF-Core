@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { useReviewProject } from "@/components/ReviewProjectContext";
-import type { LearningRule } from "@/lib/learning/types";
+import type { LearningRule, RuleEffectivenessEntry, RuleEffectivenessReport } from "@/lib/learning/types";
 import { copyToClipboard, mintAboveThresholdForScore, mintBelowThresholdForScore } from "@/lib/learning/helpers";
 
 
@@ -15,6 +15,8 @@ export type LearningProjectContextValue = {
   loading: boolean;
   active: LearningRule[];
   pending: LearningRule[];
+  effectiveness: RuleEffectivenessReport | null;
+  effectivenessByRuleId: Map<string, RuleEffectivenessEntry>;
   analysisResult: Record<string, unknown> | null;
   running: boolean;
   editorialNotes: Record<string, unknown> | null;
@@ -132,6 +134,7 @@ export function LearningProjectProvider({ children }: { children: ReactNode }) {
   const [autoCreatePerformanceRules, setAutoCreatePerformanceRules] = useState(false);
   const [ruleDetail, setRuleDetail] = useState<LearningRule | null>(null);
   const [copyHint, setCopyHint] = useState<string | null>(null);
+  const [effectiveness, setEffectiveness] = useState<RuleEffectivenessReport | null>(null);
 
   const flashCopy = (message: string) => {
     setCopyHint(message);
@@ -185,6 +188,12 @@ export function LearningProjectProvider({ children }: { children: ReactNode }) {
     }
   }, [project]);
 
+  const fetchEffectiveness = useCallback(async () => {
+    const res = await fetch(`/api/learning?project=${encodeURIComponent(project)}&section=effectiveness`);
+    if (res.ok) setEffectiveness((await res.json()) as RuleEffectivenessReport);
+    else setEffectiveness(null);
+  }, [project]);
+
   const fetchObservations = useCallback(async () => {
     const res = await fetch(`/api/learning?project=${encodeURIComponent(project)}&section=observations&limit=200`);
     if (res.ok) {
@@ -215,7 +224,8 @@ export function LearningProjectProvider({ children }: { children: ReactNode }) {
     fetchObservations();
     fetchTransparency();
     fetchLlmReviews();
-  }, [fetchRules, fetchObservations, fetchTransparency, fetchLlmReviews]);
+    fetchEffectiveness();
+  }, [fetchRules, fetchObservations, fetchTransparency, fetchLlmReviews, fetchEffectiveness]);
 
   const runAnalysis = async (action: "editorial" | "market") => {
     setRunning(true);
@@ -520,6 +530,12 @@ export function LearningProjectProvider({ children }: { children: ReactNode }) {
   const active = rules.filter((r) => r.status === "active");
   const pending = rules.filter((r) => r.status === "pending");
 
+  const effectivenessByRuleId = useMemo(() => {
+    const map = new Map<string, RuleEffectivenessEntry>();
+    for (const entry of effectiveness?.rules ?? []) map.set(entry.rule_id, entry);
+    return map;
+  }, [effectiveness]);
+
   const snapshotEntries: Array<[string, unknown]> =
     transparency &&
     transparency.snapshot != null &&
@@ -529,7 +545,7 @@ export function LearningProjectProvider({ children }: { children: ReactNode }) {
       : [];
 
   const value: LearningProjectContextValue = {
-    project, setProject, navHref, rules, loading, active, pending, analysisResult, running,
+    project, setProject, navHref, rules, loading, active, pending, effectiveness, effectivenessByRuleId, analysisResult, running,
     editorialNotes, notesBusy, csvStatus, setCsvStatus, mappingJson, setMappingJson, contextPreview,
     observations, transparency, llmBusy, llmResult, llmReviews, llmLimit, setLlmLimit, llmMintBelow,
     setLlmMintBelow, llmMintAbove, setLlmMintAbove, llmForceRereview, setLlmForceRereview, llmMintBusy,

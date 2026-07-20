@@ -1,40 +1,30 @@
 # CAF Setup — ChatGPT / AI fill instructions
 
-**Canonical checklist (download & paste):** [docs/PROJECT_SETUP_CHECKLIST.md](../../docs/PROJECT_SETUP_CHECKLIST.md)  
-Also available from Review → **New brand** → download links (`/setup/PROJECT_SETUP_CHECKLIST.md`).
+**Canonical checklist:** [docs/PROJECT_SETUP_CHECKLIST.md](../../docs/PROJECT_SETUP_CHECKLIST.md)  
+Download: Review → **New brand** → `/setup/PROJECT_SETUP_CHECKLIST.md`.
 
-Use the project setup checklist as the document you paste into a ChatGPT (or Claude / Gemini) **project** that already holds brand knowledge. The model fills the pack in place; you upload the filled markdown when creating the brand in CAF.
+One pack covers **all Project settings tabs** (Strategy, Brand, Product, Platforms, System limits, Flow types, Video defaults, HeyGen advanced, Prompts) plus content routes, research, visual text, and Product Bible text.
 
-**Separate asset checklists** (do not mix into the strategy pack):
+**Images only (separate):**
 
 | Checklist | Use when |
 |-----------|----------|
-| [BRAND_BIBLE_ASSET_CHECKLIST.md](../../docs/BRAND_BIBLE_ASSET_CHECKLIST.md) | Generating/uploading BVS images (style refs, plates, logos, …) |
-| [PRODUCT_BIBLE_ASSET_CHECKLIST.md](../../docs/PRODUCT_BIBLE_ASSET_CHECKLIST.md) | Product screenshots / UI for product routes |
+| [BRAND_BIBLE_ASSET_CHECKLIST.md](../../docs/BRAND_BIBLE_ASSET_CHECKLIST.md) | BVS images |
+| [PRODUCT_BIBLE_ASSET_CHECKLIST.md](../../docs/PRODUCT_BIBLE_ASSET_CHECKLIST.md) | Product screenshots |
 
-**Content routes** are chosen **in the project setup pack** (§6), not as a later afterthought. Review still lets you edit routes on Brand profile if you need to change them later.
+For System limits / HeyGen advanced / Prompts: expect `[REC] use CAF defaults` unless the brand has an explicit policy. Do not invent avatar IDs or prompt templates.
 
 ---
 
-## Quick Cuisina (or any brand) prompt
+## Quick prompt
 
-1. Open the brand’s ChatGPT project.
-2. Paste the project setup checklist from “Paste from here” onward (or the whole file).
+1. Open the brand’s AI project.
+2. Paste from “Paste from here”.
 3. Say:
 
-> Fill every field from this project’s knowledge for **{BrandName}** (slug **{SLUG}**). Do not interview me. Mark missing facts as `[GAP]`. Output only the Required output onboarding pack.
+> Fill this for the brand in this project. Do not interview me. Tag `[FACT]` / `[REC]` / `[GAP]`. Match CAF Project settings field labels. For limits, HeyGen advanced, and prompts without a brand policy, use `[REC] use CAF defaults`. Output only the Required output pack.
 
-4. Save the reply as `{slug}-onboarding-pack.md`.
-5. CAF Review → Workspace → **New brand** → paste/upload that file.
-
-Replace `{BrandName}` / `{SLUG}` (e.g. Cuisina / `CUISINA`).
-
----
-
-## After the pack is imported
-
-1. Generate visual assets with the Brand Bible asset checklist → upload to Brand Visual System.
-2. If product routes are on → Product Bible asset checklist.
-3. Research → brief → ideas → generate.
+4. Upload in Review → New brand.
+5. Paste any leftover advanced notes into Project settings if import did not map them.
 
 Lane catalog: [docs/CONTENT_ROUTES.md](../../docs/CONTENT_ROUTES.md).

@@ -122,7 +122,7 @@ export const CONTENT_ROUTE_LANES: readonly ContentRouteLaneDef[] = [
     id: "hook_first_video",
     label: "Hook-first video",
     description:
-      "A short cinematic hook clip, then an avatar delivers the rest of the message.",
+      "A short cinematic hook clip (matching presenter voice), then avatar Video Agent delivers the rest with B-roll.",
     group: "video",
     flow_types: [CANONICAL_FLOW_TYPES.VID_HOOK_FIRST],
     idea_buckets: ["niche_video_hook_first"],

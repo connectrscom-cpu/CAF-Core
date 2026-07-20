@@ -1,8 +1,10 @@
 # CAF Current State Context Pack — Platform and Funnel
 
-**Volume 1 of 4** | Generated 2026-07-10 | Full pack: docs/CAF_CURRENT_STATE_CONTEXT_PACK.md
+**Volume 1 of 4** | Regenerated 2026-07-16 from `docs/CAF_CURRENT_STATE_CONTEXT_PACK.md`  
+**Planning LLMs:** `docs/FABLE_IMPROVEMENT_BRIEFING.md`
 
 ---
+
 ## 1. Executive summary
 
 ### What CAF is
@@ -44,13 +46,19 @@ Operators run multi-platform content brands (e.g. SNS, Cuisina) at scale: ingest
 | Run planning + job pipeline | Product image flows (`FLOW_IMG_*`) — blocked at generation |
 | Standard carousel (`FLOW_CAROUSEL`) | Full composite saliency text-placement automation (designed, not built) |
 | QC + risk policies + human review | Project `risk_rules` — config only, **not** QC-enforced |
-| HeyGen video flows | Scene assembly (Sora) — wired but provider-dependent |
-| Inputs → signal pack funnel | Stage-3 structured idea picker at plan time (partial) |
+| HeyGen video flows (script / prompt / no-avatar / hook-first) | Scene assembly (Sora) — wired but provider-dependent |
+| Inputs → signal pack funnel (incl. LinkedIn scrapers) | Stage-3 structured idea picker at plan time (partial) |
 | Publications + Meta executor | `CAF_PUBLISH_EXECUTOR=none` default (n8n external) |
 | Learning rules (planning + generation) | Global learning rules (disabled in compiler) |
-| Review app workbench | Marketer funnel — growing, not all pipeline controls |
+| Review app workbench | Marketer funnel — growing; some ops still admin-only |
 | Manual mimic carousel | Why Mimic + New Visual — newer, actively evolving |
 | Brand Visual System (BVS) + brand bibles | BVS invented plates — `template_bg` + BVS only |
+| **Content routes** (lanes ↔ flows ↔ idea quotas) | Route UX polish; advanced lanes off by default |
+| **Project setup / onboarding packs** + `/setup/*` checklists | Dogfood friction log still thin (`CAF_DOGFOOD_NOTES.md`) |
+| LinkedIn document post path (earlier) | **Text lanes** (LI text, Reddit, IG thread) — shipped, maturing |
+| | **UGC video** (`FLOW_VID_UGC`) — shipped, maturing |
+| | Research pipeline panel / platform brief packs — newer |
+| | Pre-LLM subject relevance + content-subject guards — newer |
 
 ---
 
@@ -150,4 +158,3 @@ All job-related tables join on **`(project_id, task_id)`** — text IDs, not UUI
 | Old flow type names | `canonical-flow-types.ts` | `LEGACY_FLOW_TYPE_TO_CANONICAL` |
 
 ---
-

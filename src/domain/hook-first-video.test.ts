@@ -20,10 +20,10 @@ describe("hook-first-video", () => {
   });
 
   it("resolves body lane aliases", () => {
-    expect(resolveHookFirstBodyLane("script_avatar")).toBe("script_avatar");
+    expect(resolveHookFirstBodyLane("script_avatar")).toBe("prompt_avatar");
     expect(resolveHookFirstBodyLane("prompt")).toBe("prompt_avatar");
     expect(resolveHookFirstBodyLane("no_avatar")).toBe("no_avatar");
-    expect(resolveHookFirstBodyLane(undefined)).toBe("script_avatar");
+    expect(resolveHookFirstBodyLane(undefined)).toBe("prompt_avatar");
   });
 
   it("maps body lane to canonical HeyGen flow types", () => {

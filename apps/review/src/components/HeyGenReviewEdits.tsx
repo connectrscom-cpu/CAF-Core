@@ -27,7 +27,7 @@ export function HeyGenReviewEdits({
         when you set avatar/voice ids / force re-render).
       </p>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+      <div className="mobile-stack-grid" style={{ marginBottom: 12 }}>
         <div>
           <label className="filter-label">Avatar ID (optional)</label>
           <input

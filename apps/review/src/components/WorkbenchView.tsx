@@ -8,9 +8,10 @@ import { TaskTable } from "@/components/TaskTable";
 import { ChromePanelToggle } from "@/components/ChromePanelToggle";
 import { useReviewProject } from "@/components/ReviewProjectContext";
 import { useReviewChromeLayout } from "@/lib/review-chrome-layout";
-import { useMobileLayout } from "@/lib/use-mobile-layout";
+import { useMobileLayout, usePhoneLayout } from "@/lib/use-mobile-layout";
 import { taskReviewHref } from "@/lib/task-links";
 import { MARKETER_LABELS } from "@/lib/marketer/language";
+import { LoadingWithTip, PageTip } from "@/components/marketer/PageTip";
 import type { ReviewQueueRow } from "@/lib/types";
 import type { GroupBy } from "@/components/TaskTable";
 import { useRouter } from "next/navigation";
@@ -49,6 +50,7 @@ function WorkbenchInner({ mode = "operator", brandSlug, tabBasePath = "/review" 
   const { multiProject, activeProjectSlug, lockedSlug, navHref } = useReviewProject();
   const { layout, ready: chromeReady, toggleWorkbenchFilters } = useReviewChromeLayout();
   const isMobile = useMobileLayout();
+  const isPhone = usePhoneLayout();
   const hideFilters = chromeReady && layout.hideWorkbenchFilters;
   const searchParams = useSearchParams();
   const embeddedInAdmin = searchParams.get("embed") === "admin";
@@ -101,6 +103,17 @@ function WorkbenchInner({ mode = "operator", brandSlug, tabBasePath = "/review" 
       cancelled = true;
     };
   }, [brandSlug]);
+
+  useEffect(() => {
+    if (!(isMobile && !hideFilters && !embeddedInAdmin)) return;
+    const prev = document.body.style.overflow;
+    document.body.classList.add("body-scroll-locked");
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.classList.remove("body-scroll-locked");
+      document.body.style.overflow = prev;
+    };
+  }, [embeddedInAdmin, hideFilters, isMobile]);
 
   const groupBy = (searchParams.get("group") ?? "") as GroupBy;
 
@@ -320,7 +333,13 @@ function WorkbenchInner({ mode = "operator", brandSlug, tabBasePath = "/review" 
               </div>
             )}
             {error && <div style={{ color: "var(--red)", marginBottom: 16, fontSize: 13 }}>{error}</div>}
-            {loading && !data && <div style={{ color: "var(--muted)" }}>Loading…</div>}
+            {loading && !data && (
+              marketer ? (
+                <LoadingWithTip page="content" label="Loading…" />
+              ) : (
+                <div style={{ color: "var(--muted)" }}>Loading…</div>
+              )
+            )}
             {data && !loading && data.items.length === 0 && (
               <div className="workspace-empty workspace-empty--compact workbench-empty">
                 <h3>
@@ -344,11 +363,12 @@ function WorkbenchInner({ mode = "operator", brandSlug, tabBasePath = "/review" 
                     Browse ideas
                   </Link>
                 )}
+                {marketer ? <PageTip page="content" salt="empty" compact /> : null}
               </div>
             )}
             {data && !loading && data.items.length > 0 && (
               <>
-                {marketer && (
+                {marketer && !isPhone && (
                   <div className="workbench-view-toggle">
                     <span className="workbench-view-toggle__label">View</span>
                     <button
@@ -379,7 +399,7 @@ function WorkbenchInner({ mode = "operator", brandSlug, tabBasePath = "/review" 
                   contentSlug={validStatus === "in_review" ? "t" : "content"}
                   showQuickApprove={validStatus === "in_review"}
                   marketerMode={marketer}
-                  viewMode={marketer ? contentViewMode : "list"}
+                  viewMode={marketer ? (isPhone ? "grid" : contentViewMode) : "list"}
                   hideTitleColumn={marketer}
                   onRowSelect={openTaskRow}
                   onAfterDecision={fetchTasks}

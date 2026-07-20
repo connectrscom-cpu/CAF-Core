@@ -17,10 +17,17 @@ import { formatResearchPlatformLabels } from "@/lib/marketer/research-notes";
 import { filterResearchBriefsByPlatform } from "@/lib/marketer/research-adapters";
 import { ResearchBriefPlatformFilter } from "@/components/marketer/ResearchBriefPlatformFilter";
 import { useAbortableLoad } from "@/lib/marketer/use-abortable-load";
+import { LoadingWithTip, PageTip } from "@/components/marketer/PageTip";
 import type { HashtagInsight, IntelEvidencePost, MarketInsight, ResearchBrief } from "@/lib/marketer/types";
 import { PreviewMediaCard } from "@/components/marketer/PreviewMediaCard";
 import { pickRenderableThumb } from "@/lib/marketer/inspection-media";
 import { contentPreviewMissing, contentPreviewReady } from "@/lib/marketer/preview-resolver";
+import {
+  collectLinkedInRoleChips,
+  roleMatchesFilter,
+  toggleRoleSelection,
+} from "@/lib/marketer/linkedin-role-filter";
+import { resolveLinkedInResearchSnapshot } from "@/lib/marketer/linkedin-research-snapshot";
 
 interface IntelligenceBoardProps {
   slug: string;
@@ -117,6 +124,7 @@ export function IntelligenceBoard({ slug, initialPackId }: IntelligenceBoardProp
   const [routeQuotas, setRouteQuotas] = useState<Record<string, number>>({});
   const [openTopic, setOpenTopic] = useState<string | null>(null);
   const [briefPlatformFilter, setBriefPlatformFilter] = useState("all");
+  const [selectedLinkedInRoles, setSelectedLinkedInRoles] = useState<string[]>([]);
   const packIdRef = useRef(packId);
   packIdRef.current = packId;
   const [evidenceModal, setEvidenceModal] = useState<{
@@ -130,6 +138,10 @@ export function IntelligenceBoard({ slug, initialPackId }: IntelligenceBoardProp
   useEffect(() => {
     if (initialPackId != null) setPackId(initialPackId);
   }, [initialPackId]);
+
+  useEffect(() => {
+    setSelectedLinkedInRoles([]);
+  }, [packId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -237,6 +249,47 @@ export function IntelligenceBoard({ slug, initialPackId }: IntelligenceBoardProp
     [data?.briefs, briefPlatformFilter]
   );
 
+  const linkedInRoleChips = useMemo(() => {
+    const li = data?.intelligence?.linkedin;
+    if (!li) return [];
+    return collectLinkedInRoleChips([
+      ...li.relevantVoices.map((v) => v.roleOrHeadline),
+      ...li.weeklyTopics.flatMap((t) => t.quotes.map((q) => q.roleOrHeadline)),
+    ]);
+  }, [data?.intelligence?.linkedin]);
+
+  const filteredLinkedIn = useMemo(() => {
+    const li = data?.intelligence?.linkedin;
+    if (!li) return null;
+    if (!selectedLinkedInRoles.length) return li;
+    const weeklyTopics = li.weeklyTopics
+      .map((topic) => {
+        const quotes = topic.quotes.filter((q) => roleMatchesFilter(q.roleOrHeadline, selectedLinkedInRoles));
+        if (!quotes.length) return null;
+        return {
+          ...topic,
+          quotes,
+          evidenceCount: quotes.length,
+          sourceInsightIds: [...new Set(quotes.map((q) => q.insightsId))],
+          summary: `${quotes.length} attributed post${quotes.length === 1 ? "" : "s"} matching selected roles on this theme.`,
+        };
+      })
+      .filter((t): t is NonNullable<typeof t> => t != null);
+    const relevantVoices = li.relevantVoices.filter((v) =>
+      roleMatchesFilter(v.roleOrHeadline, selectedLinkedInRoles)
+    );
+    return { ...li, weeklyTopics, relevantVoices };
+  }, [data?.intelligence?.linkedin, selectedLinkedInRoles]);
+
+  const linkedInResearchSnapshot = useMemo(
+    () =>
+      resolveLinkedInResearchSnapshot({
+        linkedin: data?.intelligence?.linkedin,
+        researchStats: data?.intelligence?.researchStats,
+      }),
+    [data?.intelligence?.linkedin, data?.intelligence?.researchStats]
+  );
+
   useEffect(() => {
     if (!filteredBriefs.length) return;
     const current = packId || data?.packId || "";
@@ -277,7 +330,7 @@ export function IntelligenceBoard({ slug, initialPackId }: IntelligenceBoardProp
     [routeQuotas]
   );
 
-  if (loading) return <p className="workspace-muted">Loading market intelligence…</p>;
+  if (loading) return <LoadingWithTip page="intelligence" label="Loading market intelligence…" />;
   if (error && !data) return <p className="workspace-error">{error}</p>;
 
   const intel = data?.intelligence;
@@ -308,6 +361,7 @@ export function IntelligenceBoard({ slug, initialPackId }: IntelligenceBoardProp
             Start market research
           </ReviewNavLink>
         </div>
+        <PageTip page="intelligence" salt="empty" />
       </div>
     );
   }
@@ -401,11 +455,50 @@ export function IntelligenceBoard({ slug, initialPackId }: IntelligenceBoardProp
               : ""}
           </p>
 
-          {intel.linkedin.weeklyTopics.length > 0 && (
+          {linkedInRoleChips.length > 0 && (
+            <div className="ideas-format-tabs intel-li-role-filters" role="group" aria-label="Filter by job role">
+              <button
+                type="button"
+                className={`ideas-format-tab ${selectedLinkedInRoles.length === 0 ? "active" : ""}`}
+                onClick={() => setSelectedLinkedInRoles([])}
+              >
+                All roles
+              </button>
+              {linkedInRoleChips.map((chip) => {
+                const active = selectedLinkedInRoles.some((r) => r.toLowerCase() === chip.label.toLowerCase());
+                return (
+                  <button
+                    type="button"
+                    key={chip.label}
+                    className={`ideas-format-tab ${active ? "active" : ""}`}
+                    aria-pressed={active}
+                    onClick={() => setSelectedLinkedInRoles((prev) => toggleRoleSelection(prev, chip.label))}
+                  >
+                    {chip.label}
+                    <span className="intel-li-role-count">{chip.count}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {filteredLinkedIn &&
+            selectedLinkedInRoles.length > 0 &&
+            filteredLinkedIn.weeklyTopics.length === 0 &&
+            filteredLinkedIn.relevantVoices.length === 0 && (
+              <p className="intel-empty-note">
+                No topics or voices match {selectedLinkedInRoles.join(", ")}.{" "}
+                <button type="button" className="btn-ghost btn-sm" onClick={() => setSelectedLinkedInRoles([])}>
+                  Clear role filter
+                </button>
+              </p>
+            )}
+
+          {filteredLinkedIn && filteredLinkedIn.weeklyTopics.length > 0 && (
             <div className="intel-li-topics">
               <h4>What to talk about this week</h4>
               <div className="intel-li-topic-grid">
-                {intel.linkedin.weeklyTopics.map((topic) => (
+                {filteredLinkedIn.weeklyTopics.map((topic) => (
                   <article key={topic.id} className="intel-li-topic-card">
                     <header>
                       <h5>{topic.title}</h5>
@@ -455,11 +548,11 @@ export function IntelligenceBoard({ slug, initialPackId }: IntelligenceBoardProp
             </div>
           )}
 
-          {intel.linkedin.relevantVoices.length > 0 && (
+          {filteredLinkedIn && filteredLinkedIn.relevantVoices.length > 0 && (
             <div className="intel-li-voices">
               <h4>Relevant voices</h4>
               <div className="intel-li-voice-grid">
-                {intel.linkedin.relevantVoices.map((voice) => (
+                {filteredLinkedIn.relevantVoices.map((voice) => (
                   <article key={`${voice.personName}_${voice.profileUrl ?? ""}`} className="intel-li-voice-card">
                     <h5>
                       {voice.profileUrl ? (
@@ -559,74 +652,152 @@ export function IntelligenceBoard({ slug, initialPackId }: IntelligenceBoardProp
         />
       )}
 
-      {intel.researchStats && (intel.researchStats.formats.length > 0 || intel.researchStats.emotions.length > 0) && (
+      {(linkedInResearchSnapshot ||
+        (intel.researchStats &&
+          (intel.researchStats.formats.length > 0 || intel.researchStats.emotions.length > 0))) && (
         <section className="intel-stats-row">
           <h3 className="intel-group-title">Research snapshot</h3>
-          <div className="intel-stats-grid">
-            {intel.researchStats.formats.length > 0 && (
-              <div className="intel-stat-block">
-                <h4>Formats</h4>
-                <ul>
-                  {intel.researchStats.formats.map((f) => (
-                    <li key={f.key} className="intel-stat-row">
-                      <span>{f.key.replace(/_/g, " ")}</span>
-                      <div className="intel-stat-row-actions">
-                        <strong>{f.count}</strong>
-                        <IntelInspectButton
-                          label="Inspect"
-                          onClick={() =>
-                            inspectStat(statBucketToInsight(f, { kind: "format", key: f.key }, f.key.replace(/_/g, " ")))
-                          }
-                        />
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {intel.researchStats.emotions.length > 0 && (
-              <div className="intel-stat-block">
-                <h4>Emotions</h4>
-                <ul>
-                  {intel.researchStats.emotions.map((e) => (
-                    <li key={e.key} className="intel-stat-row">
-                      <span>{e.key}</span>
-                      <div className="intel-stat-row-actions">
-                        <strong>{e.count}</strong>
-                        <IntelInspectButton
-                          label="Inspect"
-                          onClick={() => inspectStat(statBucketToInsight(e, { kind: "emotion", key: e.key }, e.key))}
-                        />
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {intel.researchStats.hookTypes.length > 0 && (
-              <div className="intel-stat-block">
-                <h4>Hook types</h4>
-                <ul>
-                  {intel.researchStats.hookTypes.map((h) => (
-                    <li key={h.key} className="intel-stat-row">
-                      <span>{h.key.replace(/_/g, " ")}</span>
-                      <div className="intel-stat-row-actions">
-                        <strong>{h.count}</strong>
-                        <IntelInspectButton
-                          label="Inspect"
-                          onClick={() =>
-                            inspectStat(
-                              statBucketToInsight(h, { kind: "hook_type", key: h.key }, h.key.replace(/_/g, " "))
-                            )
-                          }
-                        />
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
+          {linkedInResearchSnapshot ? (
+            <div className="intel-stats-grid">
+              {linkedInResearchSnapshot.jobRoles.length > 0 && (
+                <div className="intel-stat-block">
+                  <h4>Job roles</h4>
+                  <ul>
+                    {linkedInResearchSnapshot.jobRoles.map((f) => (
+                      <li key={f.key} className="intel-stat-row">
+                        <span>{f.key}</span>
+                        <div className="intel-stat-row-actions">
+                          <strong>{f.count}</strong>
+                          <IntelInspectButton
+                            label="Inspect"
+                            onClick={() =>
+                              inspectStat(statBucketToInsight(f, { kind: "theme", key: f.key }, f.key))
+                            }
+                          />
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {linkedInResearchSnapshot.topics.length > 0 && (
+                <div className="intel-stat-block">
+                  <h4>Topics</h4>
+                  <ul>
+                    {linkedInResearchSnapshot.topics.map((e) => (
+                      <li key={e.key} className="intel-stat-row">
+                        <span>{e.key}</span>
+                        <div className="intel-stat-row-actions">
+                          <strong>{e.count}</strong>
+                          <IntelInspectButton
+                            label="Inspect"
+                            onClick={() =>
+                              inspectStat(statBucketToInsight(e, { kind: "theme", key: e.key }, e.key))
+                            }
+                          />
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {linkedInResearchSnapshot.companies.length > 0 && (
+                <div className="intel-stat-block">
+                  <h4>Companies</h4>
+                  <ul>
+                    {linkedInResearchSnapshot.companies.map((h) => (
+                      <li key={h.key} className="intel-stat-row">
+                        <span>{h.key}</span>
+                        <div className="intel-stat-row-actions">
+                          <strong>{h.count}</strong>
+                          <IntelInspectButton
+                            label="Inspect"
+                            onClick={() =>
+                              inspectStat(statBucketToInsight(h, { kind: "theme", key: h.key }, h.key))
+                            }
+                          />
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="intel-stats-grid">
+              {intel.researchStats!.formats.length > 0 && (
+                <div className="intel-stat-block">
+                  <h4>Formats</h4>
+                  <ul>
+                    {intel.researchStats!.formats.map((f) => (
+                      <li key={f.key} className="intel-stat-row">
+                        <span>{f.key.replace(/_/g, " ")}</span>
+                        <div className="intel-stat-row-actions">
+                          <strong>{f.count}</strong>
+                          <IntelInspectButton
+                            label="Inspect"
+                            onClick={() =>
+                              inspectStat(
+                                statBucketToInsight(f, { kind: "format", key: f.key }, f.key.replace(/_/g, " "))
+                              )
+                            }
+                          />
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {intel.researchStats!.emotions.length > 0 && (
+                <div className="intel-stat-block">
+                  <h4>Emotions</h4>
+                  <ul>
+                    {intel.researchStats!.emotions.map((e) => (
+                      <li key={e.key} className="intel-stat-row">
+                        <span>{e.key}</span>
+                        <div className="intel-stat-row-actions">
+                          <strong>{e.count}</strong>
+                          <IntelInspectButton
+                            label="Inspect"
+                            onClick={() =>
+                              inspectStat(statBucketToInsight(e, { kind: "emotion", key: e.key }, e.key))
+                            }
+                          />
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {intel.researchStats!.hookTypes.length > 0 && (
+                <div className="intel-stat-block">
+                  <h4>Hook types</h4>
+                  <ul>
+                    {intel.researchStats!.hookTypes.map((h) => (
+                      <li key={h.key} className="intel-stat-row">
+                        <span>{h.key.replace(/_/g, " ")}</span>
+                        <div className="intel-stat-row-actions">
+                          <strong>{h.count}</strong>
+                          <IntelInspectButton
+                            label="Inspect"
+                            onClick={() =>
+                              inspectStat(
+                                statBucketToInsight(
+                                  h,
+                                  { kind: "hook_type", key: h.key },
+                                  h.key.replace(/_/g, " ")
+                                )
+                              )
+                            }
+                          />
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
         </section>
       )}
 
@@ -898,69 +1069,123 @@ export function IntelligenceBoard({ slug, initialPackId }: IntelligenceBoardProp
       )}
 
       <section className="intel-generate">
-        <h3>Next: pick ideas</h3>
-        <p className="research-lead">
-          This brief includes <strong>{data.brief?.ideasCount ?? 0} curated ideas</strong> from your research.
-          Browse them, add favorites to your cart, and choose a generation style.
-        </p>
-        <div className="intel-generate-actions">
-          <ReviewNavLink
-            href={navHref(
-              `/brand/${encodeURIComponent(slug)}/ideas?packId=${encodeURIComponent(packId || data.packId || "")}`
-            )}
-            className="btn-primary"
-          >
-            Browse ideas for this brief
-          </ReviewNavLink>
-        </div>
-
-        <details className="intel-generate-advanced">
-          <summary>Generate a fresh idea set (1–3 minutes)</summary>
-          <p className="section-stub-note">
-            Ideas are created only for your enabled content routes. Set how many you want per route (total{" "}
-            {totalIdeaTarget}).
-          </p>
-          {routeLanes.length === 0 ? (
-            <p className="section-stub-note">
-              Enable content routes in your project setup pack (or Brand profile → Content routes) first.
+        <h3>{(data.brief?.ideasCount ?? 0) > 0 ? "Next: pick ideas" : "Next: create ideas"}</h3>
+        {(data.brief?.ideasCount ?? 0) > 0 ? (
+          <>
+            <p className="research-lead">
+              This brief includes <strong>{data.brief?.ideasCount ?? 0} curated ideas</strong> from your research.
+              Browse them, add favorites to your cart, and choose a generation style.
             </p>
-          ) : (
-            <div className="intel-route-quotas">
-              {routeLanes.map((lane) => (
-                <label key={lane.id} className="intel-route-quota-row">
-                  <span>{lane.label}</span>
-                  <input
-                    type="number"
-                    min={0}
-                    max={50}
-                    value={routeQuotas[lane.id] ?? 0}
-                    onChange={(e) =>
-                      setRouteQuotas((prev) => ({
-                        ...prev,
-                        [lane.id]: Math.max(0, Math.min(50, Number(e.target.value) || 0)),
-                      }))
-                    }
-                  />
-                </label>
-              ))}
+            <div className="intel-generate-actions">
+              <ReviewNavLink
+                href={navHref(
+                  `/brand/${encodeURIComponent(slug)}/ideas?packId=${encodeURIComponent(packId || data.packId || "")}`
+                )}
+                className="btn-primary"
+              >
+                Browse ideas for this brief
+              </ReviewNavLink>
             </div>
-          )}
-          <button
-            type="button"
-            className="btn-ghost"
-            disabled={generating || !data.importId || totalIdeaTarget < 1}
-            onClick={() => void generateIdeas()}
-          >
-            {generating
-              ? "Generating… (this can take a few minutes — chill)"
-              : `Generate ${totalIdeaTarget} ideas`}
-          </button>
-          {!data.importId && (
-            <p className="section-stub-note">
-              Finish Research → Build research brief first so this brief is linked to evidence.
+
+            <details className="intel-generate-advanced">
+              <summary>Generate a fresh idea set (1–3 minutes)</summary>
+              <p className="section-stub-note">
+                Ideas are created only for your enabled content routes. Set how many you want per route (total{" "}
+                {totalIdeaTarget}).
+              </p>
+              {routeLanes.length === 0 ? (
+                <p className="section-stub-note">
+                  Enable content routes in your project setup pack (or Brand profile → Content routes) first.
+                </p>
+              ) : (
+                <div className="intel-route-quotas">
+                  {routeLanes.map((lane) => (
+                    <label key={lane.id} className="intel-route-quota-row">
+                      <span>{lane.label}</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={50}
+                        value={routeQuotas[lane.id] ?? 0}
+                        onChange={(e) =>
+                          setRouteQuotas((prev) => ({
+                            ...prev,
+                            [lane.id]: Math.max(0, Math.min(50, Number(e.target.value) || 0)),
+                          }))
+                        }
+                      />
+                    </label>
+                  ))}
+                </div>
+              )}
+              <button
+                type="button"
+                className="btn-ghost"
+                disabled={generating || !data.importId || totalIdeaTarget < 1}
+                onClick={() => void generateIdeas()}
+              >
+                {generating
+                  ? "Generating… (this can take a few minutes — chill)"
+                  : `Generate ${totalIdeaTarget} ideas`}
+              </button>
+              {!data.importId && (
+                <p className="section-stub-note">
+                  Finish Research → Build research brief first so this brief is linked to evidence.
+                </p>
+              )}
+            </details>
+          </>
+        ) : (
+          <>
+            <p className="research-lead">
+              This research brief has market intelligence but no curated ideas yet. Choose how many ideas per content
+              route, then generate them here.
             </p>
-          )}
-        </details>
+            {routeLanes.length === 0 ? (
+              <p className="section-stub-note">
+                Enable content routes in your project setup pack (or Brand profile → Content routes) first.
+              </p>
+            ) : (
+              <div className="intel-route-quotas">
+                {routeLanes.map((lane) => (
+                  <label key={lane.id} className="intel-route-quota-row">
+                    <span>{lane.label}</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={50}
+                      value={routeQuotas[lane.id] ?? 0}
+                      onChange={(e) =>
+                        setRouteQuotas((prev) => ({
+                          ...prev,
+                          [lane.id]: Math.max(0, Math.min(50, Number(e.target.value) || 0)),
+                        }))
+                      }
+                    />
+                  </label>
+                ))}
+              </div>
+            )}
+            <div className="intel-generate-actions" style={{ marginTop: 12 }}>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={generating || !data.importId || totalIdeaTarget < 1}
+                onClick={() => void generateIdeas()}
+                data-agent-id="intel-create-ideas"
+              >
+                {generating
+                  ? "Generating… (this can take a few minutes — chill)"
+                  : `Create ${totalIdeaTarget} ideas`}
+              </button>
+            </div>
+            {!data.importId && (
+              <p className="section-stub-note">
+                Finish Research → Build research brief first so this brief is linked to evidence.
+              </p>
+            )}
+          </>
+        )}
         {genMessage && <p className="profile-editor-ok">{genMessage}</p>}
         {genMessage && (
           <ReviewNavLink

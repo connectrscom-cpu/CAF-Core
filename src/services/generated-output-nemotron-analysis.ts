@@ -68,6 +68,12 @@ export async function analyzeGeneratedOutputForApprovedJob(
     imagesAvailable: number;
     textBundle: string;
     maxTextChars: number;
+    /**
+     * Human editorial verdict for contrast framing. When the decision is
+     * REJECTED / NEEDS_EDIT the reviewer analyzes failure (what to change
+     * upstream), not success patterns.
+     */
+    reviewContext?: { decision: string | null; notes: string | null } | null;
   }
 ): Promise<GeneratedOutputAnalysisResult> {
   const flowType = job.flow_type ?? "";
@@ -84,14 +90,27 @@ export async function analyzeGeneratedOutputForApprovedJob(
       config.APPROVAL_REVIEW_NVIDIA_MODEL?.trim() || config.PROCESSING_VISION_NVIDIA_MODEL,
   };
 
+  const decision = opts.reviewContext?.decision?.trim().toUpperCase() ?? "APPROVED";
+  const isFailureLane = decision === "REJECTED" || decision === "NEEDS_EDIT";
+  const reviewNotes = opts.reviewContext?.notes?.trim() ?? "";
+
   const userText = [
     `task_id: ${job.task_id}`,
     `project: ${projectSlug}`,
     `flow_type: ${flowType || "unknown"}`,
     `platform: ${job.platform ?? "unknown"}`,
-    `analysis_target: caf_generated_output_approved`,
+    `analysis_target: ${isFailureLane ? "caf_generated_output_rejected" : "caf_generated_output_approved"}`,
+    `human_editorial_decision: ${decision}`,
     `images_available: ${opts.imagesAvailable}`,
     `images_attached: ${opts.imageUrls.length}`,
+    ...(isFailureLane
+      ? [
+          "",
+          "--- IMPORTANT: failure analysis lane ---",
+          `A human reviewer marked this content ${decision}. Analyze what went wrong, not what to preserve: identify the specific copy/visual/structural defects that plausibly caused the rejection, and phrase improvement points as what should change upstream (prompts, templates, parameters) to prevent this class of failure.`,
+          ...(reviewNotes ? [`Reviewer notes: ${reviewNotes.slice(0, 1500)}`] : []),
+        ]
+      : []),
     "",
     "--- Intended copy / generation spec (what CAF meant to produce) ---",
     opts.textBundle,

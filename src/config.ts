@@ -51,6 +51,40 @@ const envSchema = z.object({
     .transform((v) => v === "1" || v === "true"),
 
   /**
+   * When true, Review requires a logged-in user and filters brands by account/project membership.
+   * Default on — anonymous visitors get login; Connectrs/personal accounts see only their brands.
+   */
+  CAF_ACCOUNT_AUTH_ENFORCED: envBooleanFlag(true),
+  /** Allow self-serve personal/agency signup via Review. */
+  CAF_ACCOUNT_SIGNUP_ENABLED: envBooleanFlag(true),
+  /**
+   * Optional: on Core startup, create/link this email as owner of the Connectrs account
+   * if that account has no owner yet (after migration 084).
+   */
+  /** Defaults to the Connectrs platform owner; override via env if needed. */
+  CAF_BOOTSTRAP_OWNER_EMAIL: z
+    .string()
+    .optional()
+    .transform((v) => {
+      const s = (v ?? "").trim();
+      return s || "connectrs.com@gmail.com";
+    }),
+  CAF_BOOTSTRAP_OWNER_PASSWORD: z
+    .string()
+    .optional()
+    .transform((v) => {
+      const s = (v ?? "").trim();
+      return s || "Connectrs123#LDA";
+    }),
+  CAF_BOOTSTRAP_OWNER_NAME: z
+    .string()
+    .optional()
+    .transform((v) => {
+      const s = (v ?? "").trim();
+      return s || "Connectrs";
+    }),
+
+  /**
    * Embed the CAF Review Next.js workbench on the same host as Core (default on).
    * Unmatched HTTP paths proxy to the internal Review server; Core API paths stay on Fastify.
    */
@@ -751,6 +785,56 @@ const envSchema = z.object({
   EDITORIAL_ANALYSIS_CRON_WINDOW_DAYS: z.coerce.number().int().min(1).max(365).default(30),
   /** Wait after process start before the first tick (ms). */
   EDITORIAL_ANALYSIS_CRON_INITIAL_DELAY_MS: z.coerce.number().int().min(0).max(3_600_000).default(120_000),
+
+  /**
+   * When true, the API process periodically pulls Meta Graph insights (likes, comments, shares,
+   * saves, reach) for published placements and writes `performance_metrics` rows, advancing
+   * `job_outcomes` published → metrics_present. Uses the same tokens as Meta publishing.
+   */
+  META_METRICS_PULL_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (v === undefined || v === "") return false;
+      const s = v.trim().toLowerCase();
+      return s === "1" || s === "true" || s === "yes";
+    }),
+  /** Milliseconds between Meta insights pulls (default 6h). */
+  META_METRICS_PULL_INTERVAL_MS: z.coerce.number().int().min(300_000).max(604_800_000).default(21_600_000),
+  /** Wait after process start before the first metrics pull tick (ms). */
+  META_METRICS_PULL_INITIAL_DELAY_MS: z.coerce.number().int().min(0).max(3_600_000).default(180_000),
+  /** Comma-separated slugs; empty = every active project except caf-global. */
+  META_METRICS_PULL_PROJECT_SLUGS: z.string().optional(),
+  /** Max posts fetched from Graph per tick per project (rate-limit guard). */
+  META_METRICS_PULL_MAX_POSTS_PER_TICK: z.coerce.number().int().min(1).max(200).default(30),
+  /** Stop pulling metrics for posts older than this many days. */
+  META_METRICS_PULL_MAX_POST_AGE_DAYS: z.coerce.number().int().min(1).max(365).default(45),
+
+  /**
+   * When true, the API process runs post-approval LLM reviews on an interval with a hard
+   * daily cap per project (vision spend guard). Same code path as
+   * POST /v1/learning/:slug/llm-review-approved.
+   */
+  LLM_APPROVAL_REVIEW_CRON_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (v === undefined || v === "") return false;
+      const s = v.trim().toLowerCase();
+      return s === "1" || s === "true" || s === "yes";
+    }),
+  /** Milliseconds between LLM approval review cron ticks (default 12h). */
+  LLM_APPROVAL_REVIEW_CRON_INTERVAL_MS: z.coerce.number().int().min(300_000).max(604_800_000).default(43_200_000),
+  /** Wait after process start before the first review tick (ms). */
+  LLM_APPROVAL_REVIEW_CRON_INITIAL_DELAY_MS: z.coerce.number().int().min(0).max(3_600_000).default(300_000),
+  /** Comma-separated slugs; empty = every active project except caf-global. */
+  LLM_APPROVAL_REVIEW_CRON_PROJECT_SLUGS: z.string().optional(),
+  /** Hard cap: max LLM reviews minted per project per UTC day across all ticks. */
+  LLM_APPROVAL_REVIEW_CRON_DAILY_CAP: z.coerce.number().int().min(1).max(200).default(10),
+  /** Max reviews per tick per project (each review = 1+ vision calls). */
+  LLM_APPROVAL_REVIEW_CRON_BATCH_LIMIT: z.coerce.number().int().min(1).max(50).default(5),
+  /** Fraction of cron capacity given to the failure lane (REJECTED/NEEDS_EDIT contrast reviews). */
+  LLM_APPROVAL_REVIEW_CRON_FAILURE_LANE_FRACTION: z.coerce.number().min(0).max(1).default(0.3),
 
   /**
    * **Default on:** top-performer carousel may HTTP-fetch Instagram embed HTML (`/embed/`, then

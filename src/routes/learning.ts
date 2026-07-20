@@ -40,6 +40,10 @@ import { buildGlobalLearningDigest, getLatestGlobalLearningDigest } from "../ser
 import { buildJobDossier } from "../services/build-job-dossier.js";
 import { assertApprovalReviewVisionReady } from "../services/generated-output-nemotron-analysis.js";
 import { getLearningContextForGeneration } from "../services/learning-rule-selection.js";
+import { getRuleEffectivenessForProject } from "../services/learning-rule-effectiveness.js";
+import { getLlmReviewCalibrationForProject } from "../services/llm-review-calibration.js";
+import { getRuleLifecycleSuggestionsForProject } from "../services/learning-rule-lifecycle.js";
+import { getMarketerPerformanceSummary } from "../services/marketer-performance-summary.js";
 import { LEARNING_TRANSPARENCY_STATIC, learningTransparencySnapshot } from "../services/learning-transparency.js";
 import { parseCsvToRecords } from "../services/parse-csv-simple.js";
 import {
@@ -99,6 +103,81 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
     }
   );
 
+  // ── Rule effectiveness scorecard (read-only; generation-path attribution) ──
+  app.get<{
+    Params: { project_slug: string };
+    Querystring: { window_days?: string; min_decided?: string };
+  }>("/v1/learning/:project_slug/rules/effectiveness", async (req, reply) => {
+    const project = await getProjectBySlug(db, req.params.project_slug);
+    if (!project) return reply.code(404).send({ ok: false, error: "project not found" });
+    const windowDaysRaw = req.query.window_days ? parseInt(req.query.window_days, 10) : 90;
+    const minDecidedRaw = req.query.min_decided ? parseInt(req.query.min_decided, 10) : 5;
+    const report = await getRuleEffectivenessForProject(db, project.id, {
+      window_days: Number.isFinite(windowDaysRaw) ? windowDaysRaw : 90,
+      min_decided: Number.isFinite(minDecidedRaw) ? minDecidedRaw : 5,
+    });
+    return {
+      ok: true,
+      project_slug: project.slug,
+      coverage_note:
+        "Generation-path attribution joins task_id directly; planning-path attribution (ranking rules) is recorded per candidate at plan time (migration 083) and resolves to jobs via content_jobs. Planning rows only exist for runs planned after the migration.",
+      ...report,
+    };
+  });
+
+  // ── Marketer performance & learning summary (brand page) ─────────────
+  app.get<{
+    Params: { project_slug: string };
+    Querystring: { window_days?: string };
+  }>("/v1/learning/:project_slug/marketer-summary", async (req, reply) => {
+    const project = await getProjectBySlug(db, req.params.project_slug);
+    if (!project) return reply.code(404).send({ ok: false, error: "project not found" });
+    const windowDaysRaw = req.query.window_days ? parseInt(req.query.window_days, 10) : 60;
+    const summary = await getMarketerPerformanceSummary(db, project.id, {
+      window_days: Number.isFinite(windowDaysRaw) ? windowDaysRaw : 60,
+    });
+    return { ok: true, project_slug: project.slug, ...summary };
+  });
+
+  // ── Rule lifecycle suggestions (retire / renew / adjust weights) ─────
+  app.get<{
+    Params: { project_slug: string };
+    Querystring: { window_days?: string; min_decided?: string };
+  }>("/v1/learning/:project_slug/rules/lifecycle-suggestions", async (req, reply) => {
+    const project = await getProjectBySlug(db, req.params.project_slug);
+    if (!project) return reply.code(404).send({ ok: false, error: "project not found" });
+    const windowDaysRaw = req.query.window_days ? parseInt(req.query.window_days, 10) : 90;
+    const minDecidedRaw = req.query.min_decided ? parseInt(req.query.min_decided, 10) : 5;
+    const report = await getRuleLifecycleSuggestionsForProject(db, project.id, {
+      window_days: Number.isFinite(windowDaysRaw) ? windowDaysRaw : 90,
+      min_decided: Number.isFinite(minDecidedRaw) ? minDecidedRaw : 5,
+    });
+    return {
+      ok: true,
+      project_slug: project.slug,
+      note: "Read-only advisor. Act via the existing rule apply/retire/dismiss endpoints; suggested multipliers map observed approval lift to a planning boost (clamped 0.7–1.3).",
+      ...report,
+    };
+  });
+
+  // ── LLM reviewer calibration (Nemotron score vs human decision) ──────
+  app.get<{
+    Params: { project_slug: string };
+    Querystring: { window_days?: string; min_decided_per_side?: string };
+  }>("/v1/learning/:project_slug/llm-review-calibration", async (req, reply) => {
+    const project = await getProjectBySlug(db, req.params.project_slug);
+    if (!project) return reply.code(404).send({ ok: false, error: "project not found" });
+    const windowDaysRaw = req.query.window_days ? parseInt(req.query.window_days, 10) : 120;
+    const minSideRaw = req.query.min_decided_per_side
+      ? parseInt(req.query.min_decided_per_side, 10)
+      : 10;
+    const report = await getLlmReviewCalibrationForProject(db, project.id, {
+      window_days: Number.isFinite(windowDaysRaw) ? windowDaysRaw : 120,
+      min_decided_per_side: Number.isFinite(minSideRaw) ? minSideRaw : 10,
+    });
+    return { ok: true, project_slug: project.slug, ...report };
+  });
+
   app.post<{ Params: { project_slug: string; rule_id: string } }>(
     "/v1/learning/:project_slug/rules/:rule_id/apply",
     async (req, reply) => {
@@ -107,6 +186,40 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
       const applied = await applyLearningRule(db, project.id, req.params.rule_id);
       if (!applied) return reply.code(404).send({ ok: false, error: "rule not found or already applied" });
       return { ok: true, rule_id: req.params.rule_id, status: "active" };
+    }
+  );
+
+  /**
+   * Holdout experiment control: set `action_payload.holdout_fraction` on a rule.
+   * The compiler withholds the rule for that fraction of tasks (deterministic
+   * per rule+task) and records the withheld ids in attribution `control_rule_ids`,
+   * so the effectiveness endpoint can report treatment-vs-control deltas.
+   */
+  app.post<{ Params: { project_slug: string; rule_id: string }; Body: { holdout_fraction?: number } }>(
+    "/v1/learning/:project_slug/rules/:rule_id/holdout",
+    async (req, reply) => {
+      const project = await getProjectBySlug(db, req.params.project_slug);
+      if (!project) return reply.code(404).send({ ok: false, error: "project not found" });
+      const parsed = z
+        .object({ holdout_fraction: z.number().min(0).max(0.9) })
+        .safeParse(req.body ?? {});
+      if (!parsed.success) {
+        return reply.code(400).send({ ok: false, error: "invalid_body", details: parsed.error.flatten() });
+      }
+      const res = await db.query(
+        `UPDATE caf_core.learning_rules
+         SET action_payload = jsonb_set(
+               COALESCE(action_payload, '{}'::jsonb),
+               '{holdout_fraction}',
+               to_jsonb($3::numeric)
+             )
+         WHERE project_id = $1 AND rule_id = $2`,
+        [project.id, req.params.rule_id, parsed.data.holdout_fraction]
+      );
+      if ((res.rowCount ?? 0) === 0) {
+        return reply.code(404).send({ ok: false, error: "rule not found" });
+      }
+      return { ok: true, rule_id: req.params.rule_id, holdout_fraction: parsed.data.holdout_fraction };
     }
   );
 
@@ -524,6 +637,15 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
     task_ids: z.array(z.string()).optional(),
     skip_if_reviewed_within_days: z.number().int().min(0).max(365).optional(),
     force_rereview: z.boolean().optional(),
+    /** Only jobs on this platform (case-insensitive). */
+    platform: z.string().max(64).optional(),
+    /** Only jobs with this flow_type (exact). */
+    flow_type: z.string().max(128).optional(),
+    /** Latest editorial decision timestamp bounds (ISO). */
+    decided_after: z.string().datetime({ offset: true }).optional(),
+    decided_before: z.string().datetime({ offset: true }).optional(),
+    /** Decision lanes; default ["APPROVED"]. ["REJECTED","NEEDS_EDIT"] = failure/contrast lane. */
+    decisions: z.array(z.enum(["APPROVED", "NEEDS_EDIT", "REJECTED"])).min(1).max(3).optional(),
     mint_pending_hints_below_score: z.number().min(0).max(1).nullable().optional(),
     auto_mint_pending_hints: z.boolean().optional(),
     mint_positive_hints_above_score: z.number().min(0).max(1).nullable().optional(),
@@ -552,6 +674,11 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
         task_ids: b.task_ids,
         skip_if_reviewed_within_days: b.skip_if_reviewed_within_days,
         force_rereview: b.force_rereview,
+        platform: b.platform ?? null,
+        flow_type: b.flow_type ?? null,
+        decided_after: b.decided_after ?? null,
+        decided_before: b.decided_before ?? null,
+        decisions: b.decisions,
         mint_pending_hints_below_score: b.mint_pending_hints_below_score ?? null,
         mint_positive_hints_above_score: b.mint_positive_hints_above_score ?? null,
       });
@@ -781,12 +908,17 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
     const windowDays = (body.window_days as number) ?? 60;
     const autoCreate = body.auto_create_rules === true;
     const emitGlobal = body.emit_global_observation !== false;
+    const runLlm = body.run_llm_synthesis === true;
+    const mintLlmRules = body.mint_llm_guidance_rules === true;
 
     const result = await runPerformanceLearning(db, project.id, project.slug, {
       trigger: "manual",
       window_days: windowDays,
       auto_create_rules: autoCreate,
       emit_global_observation: emitGlobal,
+      run_llm_synthesis: runLlm,
+      mint_llm_guidance_rules: mintLlmRules,
+      config,
     });
     return { ok: true as const, ...result };
   }

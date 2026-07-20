@@ -89,23 +89,46 @@ export type BrandSlideFrameOption = {
   reprintUrl: string;
 };
 
-/** Brand bible slide_frame assets for the layout editor frame picker. */
-export function resolveBrandSlideFrames(
+export type BrandSlideLogoOption = BrandSlideFrameOption;
+
+/** Carousel/video logo stamp corners — matches renderer + video-assembly. */
+export type BrandLogoPosition = "tl" | "tr" | "bl" | "br";
+
+export const BRAND_LOGO_POSITIONS: Array<{ id: BrandLogoPosition; label: string; short: string }> = [
+  { id: "tl", label: "Top left", short: "TL" },
+  { id: "tr", label: "Top right", short: "TR" },
+  { id: "bl", label: "Bottom left", short: "BL" },
+  { id: "br", label: "Bottom right", short: "BR" },
+];
+
+export function normalizeBrandLogoPosition(raw: string | null | undefined): BrandLogoPosition {
+  const pos = String(raw ?? "").trim().toLowerCase();
+  if (pos === "tl" || pos === "tr" || pos === "bl" || pos === "br") return pos;
+  return "br";
+}
+
+type ResolvedBibleAsset = {
+  asset_id?: string;
+  role?: string;
+  label?: string | null;
+  public_url?: string | null;
+};
+
+function resolveBibleRoleOptions(
   projectSlug: string,
-  resolvedAssets: Array<{
-    asset_id?: string;
-    role?: string;
-    label?: string | null;
-    public_url?: string | null;
-  }>
+  resolvedAssets: ResolvedBibleAsset[],
+  role: string,
+  defaultLabel: string
 ): BrandSlideFrameOption[] {
   const slug = projectSlug.trim();
   const out: BrandSlideFrameOption[] = [];
+  const seen = new Set<string>();
   for (const row of resolvedAssets) {
-    if (row.role !== "slide_frame") continue;
+    if (row.role !== role) continue;
     const assetId = typeof row.asset_id === "string" ? row.asset_id.trim() : "";
-    if (!assetId) continue;
-    const label = typeof row.label === "string" && row.label.trim() ? row.label.trim() : "Slide frame";
+    if (!assetId || seen.has(assetId)) continue;
+    seen.add(assetId);
+    const label = typeof row.label === "string" && row.label.trim() ? row.label.trim() : defaultLabel;
     const pub = typeof row.public_url === "string" ? row.public_url.trim() : "";
     const displayUrl =
       pub && /^https?:\/\//i.test(pub) ? pub : brandAssetProxyUrl(slug, { id: assetId });
@@ -114,6 +137,44 @@ export function resolveBrandSlideFrames(
     out.push({
       assetId,
       label,
+      displayUrl,
+      reprintUrl,
+    });
+  }
+  return out;
+}
+
+/** Brand bible slide_frame assets for the layout editor frame picker. */
+export function resolveBrandSlideFrames(
+  projectSlug: string,
+  resolvedAssets: ResolvedBibleAsset[]
+): BrandSlideFrameOption[] {
+  return resolveBibleRoleOptions(projectSlug, resolvedAssets, "slide_frame", "Slide frame");
+}
+
+/**
+ * Brand logos for the editor stamp picker.
+ * Prefers bible `role === "logo"`; falls back to kit assets with `kind === "logo"`.
+ */
+export function resolveBrandSlideLogos(
+  projectSlug: string,
+  resolvedAssets: ResolvedBibleAsset[],
+  brandAssets: BrandAssetRow[] = []
+): BrandSlideLogoOption[] {
+  const out = resolveBibleRoleOptions(projectSlug, resolvedAssets, "logo", "Logo");
+  const seen = new Set(out.map((logo) => logo.assetId));
+  const slug = projectSlug.trim();
+  for (const asset of brandAssets) {
+    if (asset.kind !== "logo") continue;
+    const assetId = typeof asset.id === "string" ? asset.id.trim() : "";
+    if (!assetId || seen.has(assetId)) continue;
+    seen.add(assetId);
+    const displayUrl = resolveBrandAssetImageUrl(slug, asset);
+    if (!displayUrl) continue;
+    const reprintUrl = resolveBrandAssetReprintUrl(slug, asset) || displayUrl;
+    out.push({
+      assetId,
+      label: "Logo",
       displayUrl,
       reprintUrl,
     });
@@ -133,4 +194,14 @@ export function resolveBrandFrameReprintUrl(
   if (hit) return resolveBrandAssetReprintUrl(projectSlug, hit, coreBaseUrl);
   if (projectSlug.trim()) return brandAssetCoreFileUrl(projectSlug, id, coreBaseUrl);
   return "";
+}
+
+/** Same resolution as frames — look up a specific logo asset by id. */
+export function resolveBrandLogoReprintUrlById(
+  projectSlug: string,
+  assets: BrandAssetRow[],
+  assetId: string,
+  coreBaseUrl?: string
+): string {
+  return resolveBrandFrameReprintUrl(projectSlug, assets, assetId, coreBaseUrl);
 }

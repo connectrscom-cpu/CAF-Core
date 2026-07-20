@@ -3,7 +3,7 @@
 import { Fragment } from "react";
 import Link from "next/link";
 import { taskReviewHref } from "@/lib/task-links";
-import type { LearningSectionId } from "@/lib/learning/types";
+import type { LearningSectionId, RuleEffectivenessEntry } from "@/lib/learning/types";
 import { RuleDetailModal } from "@/components/learning/RuleDetailModal";
 import {
   asStringList,
@@ -18,6 +18,44 @@ import {
 } from "@/lib/learning/helpers";
 import { useLearningProject } from "@/components/learning/LearningProjectProvider";
 
+function RuleImpactCell({ entry, isRanking }: { entry: RuleEffectivenessEntry | undefined; isRanking: boolean }) {
+  if (!entry || entry.attributed_tasks === 0) {
+    return (
+      <span
+        style={{ color: "var(--muted)" }}
+        title={
+          isRanking
+            ? "No planning attribution yet — recorded per candidate from the next planned run onward."
+            : "No generations were attributed to this rule in the window."
+        }
+      >
+        no data
+      </span>
+    );
+  }
+  if (entry.decided_tasks === 0 || entry.approval_rate == null) {
+    return (
+      <span style={{ color: "var(--muted)" }} title="Jobs were generated with this rule but none have an editorial decision yet.">
+        {entry.attributed_tasks} job{entry.attributed_tasks === 1 ? "" : "s"}, undecided
+      </span>
+    );
+  }
+  const pct = Math.round(entry.approval_rate * 100);
+  const delta = entry.approval_delta_vs_baseline;
+  const deltaLabel = delta == null ? "" : ` (${delta >= 0 ? "+" : ""}${Math.round(delta * 100)} vs base)`;
+  const color =
+    !entry.sample_sufficient ? "var(--muted)" : delta != null && delta < 0 ? "var(--danger, #d66)" : "var(--ok, #3a3)";
+  return (
+    <span
+      style={{ color }}
+      title={`${entry.decided_tasks} decided of ${entry.attributed_tasks} attributed: ${entry.approved} approved, ${entry.needs_edit} needs-edit, ${entry.rejected} rejected.${entry.sample_sufficient ? "" : " Small sample — treat as noise."}`}
+    >
+      {pct}% appr{deltaLabel}
+      {entry.sample_sufficient ? "" : " ·small n"}
+    </span>
+  );
+}
+
 export function LearningSectionContent({ section }: { section: LearningSectionId }) {
   const ctx = useLearningProject();
   const {
@@ -26,6 +64,7 @@ export function LearningSectionContent({ section }: { section: LearningSectionId
     llmReviews, llmLimit, setLlmLimit, llmMintBelow, setLlmMintBelow, llmMintAbove, setLlmMintAbove,
     llmForceRereview, setLlmForceRereview, llmMintBusy, llmMintStatus, expandedLlmReviewId,
     setExpandedLlmReviewId, operatorHintDrafts, setOperatorHintDrafts, llmRowActionBusy, llmRowActionMsg,
+    effectiveness, effectivenessByRuleId,
     llmCompiledBrief, setLlmCompiledBrief, llmRepoAgentPrompt, setLlmRepoAgentPrompt, obsLogFilter,
     setObsLogFilter, expandedObservationId, setExpandedObservationId, persistEngineeringInsight,
     setPersistEngineeringInsight, llmNotesSynthesis, setLlmNotesSynthesis, autoCreatePerformanceRules,
@@ -315,7 +354,7 @@ export function LearningSectionContent({ section }: { section: LearningSectionId
             ) : null}
           </div>
           {llmRowActionMsg ? <p className="learning-copy-hint">{llmRowActionMsg}</p> : null}
-          <div style={{ maxHeight: "min(70vh, 640px)", overflow: "auto", border: "1px solid var(--border)", borderRadius: 8 }}>
+          <div className="table-scroll" style={{ maxHeight: "min(70vh, 640px)", overflow: "auto" }}>
           <table className="learning-llm-table">
             <thead>
               <tr>
@@ -924,8 +963,8 @@ export function LearningSectionContent({ section }: { section: LearningSectionId
               </button>
             </div>
           </div>
-          <div style={{ maxHeight: "min(65vh, 520px)", overflow: "auto", border: "1px solid var(--border)", borderRadius: 8 }}>
-            <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
+          <div className="table-scroll" style={{ maxHeight: "min(65vh, 520px)", overflow: "auto" }}>
+            <table className="learning-obs-table" style={{ width: "100%", fontSize: 12, borderCollapse: "collapse", minWidth: 640 }}>
               <thead style={{ position: "sticky", top: 0, background: "var(--card)", zIndex: 1 }}>
                 <tr>
                   <th style={{ textAlign: "left", padding: 8, borderBottom: "1px solid var(--border)" }}>When</th>
@@ -1050,12 +1089,16 @@ export function LearningSectionContent({ section }: { section: LearningSectionId
             {active.length === 0 ? (
               <p style={{ color: "var(--muted)", fontSize: 13 }}>No active learning rules yet.</p>
             ) : (
+              <div className="table-scroll">
               <table className="learning-rule-table">
                 <thead>
                   <tr>
                     <th>Rule ID</th>
                     <th>Action</th>
                     <th>Family</th>
+                    <th title={`Approval rate of jobs generated with this rule vs project baseline (last ${effectiveness?.window_days ?? 90}d). Generation-path attribution only — ranking rules show no data.`}>
+                      Impact
+                    </th>
                     <th />
                     <th />
                     <th />
@@ -1077,6 +1120,12 @@ export function LearningSectionContent({ section }: { section: LearningSectionId
                         </span>
                       </td>
                       <td style={{ color: "var(--fg-secondary)", fontSize: 12 }}>{rule.rule_family ?? "—"}</td>
+                      <td style={{ fontSize: 12 }}>
+                        <RuleImpactCell
+                          entry={effectivenessByRuleId.get(rule.rule_id)}
+                          isRanking={rule.rule_family === "ranking" || rule.rule_family === "suppression"}
+                        />
+                      </td>
                       <td>
                         <button type="button" className="btn-ghost" onClick={() => setRuleDetail(rule)} title="Full rule id, trigger, and payload">
                           Info
@@ -1096,6 +1145,7 @@ export function LearningSectionContent({ section }: { section: LearningSectionId
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
           </div>
 
@@ -1108,6 +1158,7 @@ export function LearningSectionContent({ section }: { section: LearningSectionId
             {pending.length === 0 ? (
               <p style={{ color: "var(--muted)", fontSize: 13 }}>No pending rules.</p>
             ) : (
+              <div className="table-scroll">
               <table className="learning-rule-table">
                 <thead>
                   <tr>
@@ -1157,6 +1208,7 @@ export function LearningSectionContent({ section }: { section: LearningSectionId
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
           </div>
         </div>

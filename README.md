@@ -8,9 +8,13 @@ CAF (Content Automation Framework) is a **content operating system**: **signals 
 
 | Document | Purpose |
 |----------|---------|
+| **[docs/CAF_CURRENT_STATE_CONTEXT_PACK.md](docs/CAF_CURRENT_STATE_CONTEXT_PACK.md)** | **Current repo truth** — operational map (prefer over older merged guides) |
+| **[docs/FABLE_IMPROVEMENT_BRIEFING.md](docs/FABLE_IMPROVEMENT_BRIEFING.md)** | **Fable / expensive models** — what to attach + ranked improvement format |
 | **[docs/CAF_PRODUCT_PITCH.md](docs/CAF_PRODUCT_PITCH.md)** | **Product pitch** — leadership, investors, evaluators |
 | **[docs/CAF_COMPLETE_PRODUCT_GUIDE.md](docs/CAF_COMPLETE_PRODUCT_GUIDE.md)** | **Complete product guide** — what CAF is and does (all capabilities) |
 | **[docs/EXTERNAL_CONTEXT_PACK.md](docs/EXTERNAL_CONTEXT_PACK.md)** | **ChatGPT / other repos** — tiered bundle index + system prompt template |
+| **[docs/CONTENT_ROUTES.md](docs/CONTENT_ROUTES.md)** | Marketer content lanes ↔ flows ↔ idea buckets |
+| **[docs/PROJECT_SETUP_CHECKLIST.md](docs/PROJECT_SETUP_CHECKLIST.md)** | Brand onboarding pack contract |
 | **[docs/REBUILD_FROM_DOCS.md](docs/REBUILD_FROM_DOCS.md)** | Bootstrap CAF Core from docs (DB → API → media → review) |
 | **[docs/CAF_CORE_COMPLETE_GUIDE.md](docs/CAF_CORE_COMPLETE_GUIDE.md)** | **Single merged reference** — overview, stack, lifecycles, layers, QC, risk, guidance, repos |
 | **[docs/DOMAIN_MODEL.md](docs/DOMAIN_MODEL.md)** | Entities, ID patterns, lifecycles (for external readers) |
@@ -192,9 +196,13 @@ fly deploy -a caf-core
 
 | Doc | Use |
 |-----|-----|
+| `docs/CAF_CURRENT_STATE_CONTEXT_PACK.md` | **Current repo truth** — operational map |
+| `docs/FABLE_IMPROVEMENT_BRIEFING.md` | **Fable / expensive models** — ranked improvement attach list |
 | `docs/CAF_PRODUCT_PITCH.md` | Product pitch for leadership / evaluators |
 | `docs/CAF_COMPLETE_PRODUCT_GUIDE.md` | Complete product guide (what CAF is and does) |
 | `docs/EXTERNAL_CONTEXT_PACK.md` | **ChatGPT / external repos** — tiered upload list + system prompt |
+| `docs/CONTENT_ROUTES.md` | Marketer lanes ↔ flows ↔ idea buckets |
+| `docs/PROJECT_SETUP_CHECKLIST.md` | Brand onboarding pack contract |
 | `docs/REBUILD_FROM_DOCS.md` | Bootstrap stack from documentation |
 | `docs/DOMAIN_MODEL.md`, `docs/DATABASE_SCHEMA.md` | IDs + Postgres tables for re-implementers |
 | `docs/CAF_CORE_COMPLETE_GUIDE.md` | **All-in-one** project logic: stack, lifecycle, layers, QC, risk, guidance, invariants |

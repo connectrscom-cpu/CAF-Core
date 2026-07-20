@@ -10,20 +10,39 @@ function ruleMatchesCandidate(
   return true;
 }
 
-/** Apply rank boosts / penalties from learning rules (ranking family). */
-export function applyLearningBoosts(
+export interface LearningBoostTraceEntry {
+  candidate_id: string;
+  applied_rule_ids: string[];
+  multiplier: number;
+}
+
+export interface LearningBoostResult {
+  candidates: ScoredCandidate[];
+  /** One entry per candidate that at least one ranking rule matched. */
+  trace: LearningBoostTraceEntry[];
+}
+
+/**
+ * Apply rank boosts / penalties from learning rules (ranking family) and
+ * record which rules touched which candidates so planning-side attribution
+ * can be persisted (mirrors the generation path's attribution rows).
+ */
+export function applyLearningBoostsWithTrace(
   scored: ScoredCandidate[],
   rules: LearningRuleRow[]
-): ScoredCandidate[] {
+): LearningBoostResult {
   const relevant = rules.filter((r) =>
     ["BOOST_RANK", "SCORE_BOOST", "SCORE_PENALTY"].includes(r.action_type)
   );
-  if (relevant.length === 0) return scored;
+  if (relevant.length === 0) return { candidates: scored, trace: [] };
 
-  return scored.map((c) => {
+  const trace: LearningBoostTraceEntry[] = [];
+  const candidates = scored.map((c) => {
     let mult = 1;
+    const appliedRuleIds: string[] = [];
     for (const r of relevant) {
       if (!ruleMatchesCandidate(r, c)) continue;
+      appliedRuleIds.push(r.rule_id);
       const p = r.action_payload ?? {};
       if (r.action_type === "BOOST_RANK") {
         const delta = typeof p.multiplier === "number" ? p.multiplier : 1.05;
@@ -36,11 +55,27 @@ export function applyLearningBoosts(
         mult *= Math.max(0.05, 1 + pen);
       }
     }
+    if (appliedRuleIds.length > 0) {
+      trace.push({
+        candidate_id: c.candidate_id,
+        applied_rule_ids: appliedRuleIds,
+        multiplier: Math.round(mult * 10000) / 10000,
+      });
+    }
     return {
       ...c,
       pre_gen_score: Math.min(1, Math.round(c.pre_gen_score * mult * 10000) / 10000),
     };
   });
+  return { candidates, trace };
+}
+
+/** Apply rank boosts / penalties from learning rules (ranking family). */
+export function applyLearningBoosts(
+  scored: ScoredCandidate[],
+  rules: LearningRuleRow[]
+): ScoredCandidate[] {
+  return applyLearningBoostsWithTrace(scored, rules).candidates;
 }
 
 export function sortByScoreDesc(candidates: ScoredCandidate[]): ScoredCandidate[] {

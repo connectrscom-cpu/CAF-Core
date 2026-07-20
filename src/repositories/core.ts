@@ -114,6 +114,7 @@ export async function ensureProject(db: Pool, slug: string, displayName?: string
   const existing = await getProjectBySlug(db, slug);
   if (existing) {
     await ensureDefaultProjectProfileData(db, existing.id);
+    await ensureLegacyProjectOnConnectrsAccount(db, existing.id);
     return existing;
   }
   const row = await qOne<ProjectRow>(
@@ -125,7 +126,24 @@ export async function ensureProject(db: Pool, slug: string, displayName?: string
   );
   if (!row) throw new Error("Failed to upsert project");
   await ensureDefaultProjectProfileData(db, row.id);
+  await ensureLegacyProjectOnConnectrsAccount(db, row.id);
   return row;
+}
+
+/** Keep unscoped brand creates under Connectrs so existing ownership stays intact. */
+async function ensureLegacyProjectOnConnectrsAccount(db: Pool, projectId: string): Promise<void> {
+  await q(
+    db,
+    `UPDATE caf_core.projects p
+     SET account_id = a.id, updated_at = now()
+     FROM caf_core.accounts a
+     WHERE p.id = $1
+       AND p.account_id IS NULL
+       AND COALESCE(p.is_system, false) = false
+       AND p.slug <> 'caf-global'
+       AND a.slug = 'connectrs'`,
+    [projectId]
+  );
 }
 
 export async function updateProjectBySlug(

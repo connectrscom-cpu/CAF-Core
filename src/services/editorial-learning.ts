@@ -27,6 +27,7 @@ import {
   type EditorialNotesLlmSynthesis,
 } from "./editorial-notes-llm-synthesis.js";
 import { emitGlobalLearningObservation } from "./global-learning-observe.js";
+import { buildEditEvidenceDigest, type EditEvidenceDigest } from "./learning-edit-evidence.js";
 import {
   compactValidationOutputForEditorialSynthesis,
   validationCompactHasStructuredSignal,
@@ -472,7 +473,28 @@ export async function analyzeEditorialPatterns(
 
   let llmNotesResult: EditorialNotesLlmResult | null = null;
   if (runLlmOnNotes) {
+    // Edit/reprint evidence (learning-edit-evidence.ts): what operators actually
+    // changed on jobs in this window, as before→after diffs + reprint knobs.
+    let editEvidence: EditEvidenceDigest | null = null;
+    try {
+      const editObs = await q<Record<string, unknown>>(
+        db,
+        `SELECT source_type, payload_json
+         FROM caf_core.learning_observations
+         WHERE project_id = $1
+           AND source_type IN ('editorial_edit_diff', 'reprint_event')
+           AND observed_at >= $2
+         ORDER BY observed_at DESC
+         LIMIT 200`,
+        [projectId, cutoff.toISOString()]
+      );
+      if (editObs.length > 0) editEvidence = buildEditEvidenceDigest(editObs);
+    } catch {
+      editEvidence = null;
+    }
+
     const aggregate = {
+      ...(editEvidence ? { edit_evidence: editEvidence } : {}),
       total_reviews: total,
       approval_rate: approvalRateWindow,
       rejection_rate: total > 0 ? rejected / total : 0,

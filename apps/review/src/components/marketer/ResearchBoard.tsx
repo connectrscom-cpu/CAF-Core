@@ -11,6 +11,7 @@ import {
 } from "@/lib/marketer/research-adapters";
 import { ResearchBriefPlatformFilter } from "@/components/marketer/ResearchBriefPlatformFilter";
 import { ResearchPipelinePanel } from "@/components/marketer/ResearchPipelinePanel";
+import { LoadingWithTip } from "@/components/marketer/PageTip";
 
 export type ResearchMainTab = "scrapers" | "analysis";
 
@@ -360,7 +361,7 @@ export function ResearchBoard({ slug, tab = "scrapers" }: ResearchBoardProps) {
     }
   }
 
-  if (loading) return <p className="workspace-muted">Loading research…</p>;
+  if (loading) return <LoadingWithTip page="research" label="Loading research…" />;
   if (error && !data) return <p className="workspace-error">{error}</p>;
 
   const activeGroup = data?.sources.find((s) => s.id === activeSource);
@@ -643,7 +644,7 @@ export function ResearchBoard({ slug, tab = "scrapers" }: ResearchBoardProps) {
         <>
           <section className="research-section research-analysis-intro">
             <p className="research-lead">
-              Analysis uses evidence from a completed scrape. Need new posts?{" "}
+              Analysis uses evidence from a completed scrape or an uploaded evidence workbook. Need new posts?{" "}
               <Link href={scrapersHref}>Run scrapers</Link> first, then come back here.
             </p>
           </section>
@@ -659,6 +660,9 @@ export function ResearchBoard({ slug, tab = "scrapers" }: ResearchBoardProps) {
                 ? `Elapsed ${Math.floor(scrapeElapsedSec / 60)}m ${scrapeElapsedSec % 60}s · expect about ${scrapeEta.lo}–${scrapeEta.hi} minutes total.`
                 : null
             }
+            onBriefCreated={() => {
+              void refreshData().catch(() => {});
+            }}
           />
 
           <section className="research-section">
@@ -667,7 +671,7 @@ export function ResearchBoard({ slug, tab = "scrapers" }: ResearchBoardProps) {
               <ResearchBriefPlatformFilter value={briefPlatformFilter} onChange={setBriefPlatformFilter} />
             </div>
             <p className="research-lead">
-              Completed analysis stored as briefs — open Intelligence or Ideas from here.
+              Completed analysis stored as briefs — open Ideas to cart them, or Intelligence to explore patterns.
             </p>
             {(data?.briefs ?? []).length === 0 ? (
               <div className="workspace-empty workspace-empty--compact">

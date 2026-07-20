@@ -4,7 +4,11 @@ import { useCallback } from "react";
 import { CarouselBrandStylingPanel } from "@/components/CarouselBrandStylingPanel";
 import { buildSlidesJson, mergeCarouselThemeIntoPayload, mergeCarouselTypographyIntoPayload } from "@/lib/carousel-slides";
 import type { NormalizedSlide, CarouselSlidesPayload } from "@/lib/carousel-slides";
-import type { BrandSlideFrameOption } from "@/lib/brand-asset-url";
+import type {
+  BrandLogoPosition,
+  BrandSlideFrameOption,
+  BrandSlideLogoOption,
+} from "@/lib/brand-asset-url";
 
 export interface CarouselBrandStylingState {
   fontScale: string;
@@ -16,6 +20,8 @@ export interface CarouselBrandStylingState {
   paperHex: string;
   inkHex: string;
   logoEnabled: boolean;
+  selectedLogoAssetId: string;
+  logoPosition: BrandLogoPosition;
   frameEnabled: boolean;
   selectedFrameAssetId: string;
 }
@@ -34,10 +40,13 @@ export interface CarouselEditsProps extends CarouselBrandStylingState {
   onPaperHexChange: (value: string) => void;
   onInkHexChange: (value: string) => void;
   onLogoEnabledChange: (enabled: boolean) => void;
+  onSelectedLogoAssetIdChange: (assetId: string) => void;
+  onLogoPositionChange: (position: BrandLogoPosition) => void;
   onFrameEnabledChange: (enabled: boolean) => void;
   onSelectedFrameAssetIdChange: (assetId: string) => void;
   brandPalette?: string[];
   brandLogoDisplayUrl?: string;
+  brandLogos?: BrandSlideLogoOption[];
   brandFrames?: BrandSlideFrameOption[];
   /** When true, typography & brand controls live beside the preview — hide duplicate block here. */
   stylingInPreviewPanel?: boolean;
@@ -99,12 +108,17 @@ export function CarouselEdits({
   onInkHexChange,
   logoEnabled,
   onLogoEnabledChange,
+  selectedLogoAssetId,
+  onSelectedLogoAssetIdChange,
+  logoPosition,
+  onLogoPositionChange,
   frameEnabled,
   onFrameEnabledChange,
   selectedFrameAssetId,
   onSelectedFrameAssetIdChange,
   brandPalette = [],
   brandLogoDisplayUrl = "",
+  brandLogos = [],
   brandFrames = [],
   stylingInPreviewPanel = false,
   finalTitleOverride,
@@ -128,6 +142,8 @@ export function CarouselEdits({
     paperHex,
     inkHex,
     logoEnabled,
+    selectedLogoAssetId,
+    logoPosition,
     frameEnabled,
     selectedFrameAssetId,
   };
@@ -184,9 +200,14 @@ export function CarouselEdits({
           carouselHandleFontPx={carouselHandleFontPx}
           onCarouselHandleFontPxChange={onCarouselHandleFontPxChange}
           brandPalette={brandPalette}
+          brandLogos={brandLogos}
           brandLogoDisplayUrl={brandLogoDisplayUrl}
           logoEnabled={logoEnabled}
           onLogoEnabledChange={onLogoEnabledChange}
+          selectedLogoAssetId={selectedLogoAssetId}
+          onSelectedLogoAssetIdChange={onSelectedLogoAssetIdChange}
+          logoPosition={logoPosition}
+          onLogoPositionChange={onLogoPositionChange}
           brandFrames={brandFrames}
           frameEnabled={frameEnabled}
           onFrameEnabledChange={onFrameEnabledChange}

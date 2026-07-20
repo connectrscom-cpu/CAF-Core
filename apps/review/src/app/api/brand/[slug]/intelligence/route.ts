@@ -1,3 +1,4 @@
+import { brandAccessDeniedResponse } from "@/lib/brand-access-guard";
 import { NextRequest, NextResponse } from "next/server";
 import {
   buildIdeasFromImport,
@@ -78,6 +79,11 @@ function str(v: unknown): string {
 
 export async function GET(req: NextRequest, ctx: Ctx) {
   const { slug } = await ctx.params;
+  {
+    const denied = await brandAccessDeniedResponse(slug);
+    if (denied) return denied;
+  }
+
   if (!slug) return NextResponse.json({ error: "Missing brand" }, { status: 400 });
 
   const displayName = await resolveDisplayName(slug);
@@ -134,6 +140,11 @@ export async function GET(req: NextRequest, ctx: Ctx) {
 
 export async function POST(req: NextRequest, ctx: Ctx) {
   const { slug } = await ctx.params;
+  {
+    const denied = await brandAccessDeniedResponse(slug);
+    if (denied) return denied;
+  }
+
   if (!slug) return NextResponse.json({ error: "Missing brand" }, { status: 400 });
 
   const body = (await req.json()) as {
@@ -243,7 +254,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       ideasCount: packResult.ideas_count ?? ideasResult.ideas_count,
       ideaListId: ideasResult.idea_list_id,
       signalPackId: packResult.signal_pack_id,
-      message: `Created a new research brief with ${packResult.ideas_count ?? ideasResult.ideas_count ?? 0} ideas. Open Ideas to review them.`,
+      message: `Created ${packResult.ideas_count ?? ideasResult.ideas_count ?? 0} ideas. Open Ideas to review them.`,
     });
   } catch {
     return NextResponse.json(

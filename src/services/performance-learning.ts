@@ -15,6 +15,7 @@ import { markJobOutcomeMetricsPresent } from "../repositories/job-outcomes.js";
 import { q } from "../db/queries.js";
 import { insertLearningRule } from "../repositories/learning.js";
 import { insertPerformanceMetric } from "../repositories/ops.js";
+import { boostFromLift, computeGroupPerformanceStats } from "./performance-stats.js";
 
 export interface PerformanceIngestionInput {
   candidate_id?: string;
@@ -153,113 +154,88 @@ export async function analyzePerformanceAnalysis(
   const avgSaves = savesArr.length > 0 ? savesArr.reduce((a, b) => a + b, 0) / savesArr.length : 0;
   const avgEngagement = engArr.length > 0 ? engArr.reduce((a, b) => a + b, 0) / engArr.length : 0;
 
-  // Per-flow-type performance
-  const flowPerf = await q<{
+  // Per-task metric joined to flow_type; engagement_rate preferred, saves fallback.
+  const perTask = await q<{
     flow_type: string;
-    avg_saves: string;
-    avg_eng: string;
-    cnt: string;
+    engagement_rate: string | null;
+    saves: string | null;
   }>(
     db,
     `
-    SELECT j.flow_type,
-           AVG(pm.saves)::text AS avg_saves,
-           AVG(pm.engagement_rate)::text AS avg_eng,
-           COUNT(*)::text AS cnt
+    SELECT j.flow_type, pm.engagement_rate::text, pm.saves::text
     FROM caf_core.performance_metrics pm
     JOIN caf_core.content_jobs j ON j.task_id = pm.task_id AND j.project_id = pm.project_id
     WHERE pm.project_id = $1 AND pm.created_at >= $2 AND pm.metric_window = 'stabilized'
-    GROUP BY j.flow_type
-    HAVING COUNT(*) >= 3
   `,
     [projectId, cutoff.toISOString()]
   );
 
+  // Prefer engagement rate when at least half the rows carry it; else saves.
+  const engRows = perTask.filter((r) => r.engagement_rate != null && !isNaN(parseFloat(r.engagement_rate)));
+  const useEngagement = engRows.length >= Math.max(3, perTask.length / 2);
+  const metricName = useEngagement ? "engagement_rate" : "saves";
+  const samples = (useEngagement ? engRows : perTask)
+    .map((r) => ({
+      group: r.flow_type ?? "",
+      value: parseFloat((useEngagement ? r.engagement_rate : r.saves) ?? "NaN"),
+    }))
+    .filter((s) => Number.isFinite(s.value));
+
+  // Empirical-Bayes shrinkage toward the project baseline (see performance-stats.ts).
+  const stats = computeGroupPerformanceStats(samples, {
+    priorStrength: 5,
+    minSamples: 5,
+    liftThreshold: 0.25,
+  });
+
   const insights: PerformanceInsight[] = [];
   let rulesCreated = 0;
 
-  // Identify top and bottom performing flow types
-  for (const row of flowPerf) {
-    const flowSaves = parseFloat(row.avg_saves);
-    const count = parseInt(row.cnt, 10);
+  for (const g of stats.groups) {
+    if (!g.significant) continue;
+    const direction = g.lift > 0 ? "high_performing_flow" : "low_performing_flow";
+    const insight: PerformanceInsight = {
+      insight_type: direction,
+      scope: g.group,
+      detail: `Flow "${g.group}" ${metricName} shrunk mean ${g.shrunk_mean} vs baseline ${stats.baseline} (lift ${(g.lift * 100).toFixed(0)}%, ${g.n} samples, raw mean ${g.raw_mean})`,
+      confidence: Math.min(0.9, 0.5 + g.n * 0.04),
+      sample_size: g.n,
+      rule_created: false,
+    };
 
-    if (flowSaves > avgSaves * 1.5 && count >= 5) {
-      const insight: PerformanceInsight = {
-        insight_type: "high_performing_flow",
-        scope: row.flow_type,
-        detail: `Flow "${row.flow_type}" avg saves ${flowSaves.toFixed(1)} vs overall ${avgSaves.toFixed(1)} (${count} samples)`,
-        confidence: Math.min(0.9, 0.5 + count * 0.04),
-        sample_size: count,
-        rule_created: false,
-      };
-
-      if (autoCreateRules) {
-        const ruleId = `performance_boost_${row.flow_type}_${Date.now()}`;
-        await insertLearningRule(db, {
-          rule_id: ruleId,
-          project_id: projectId,
-          trigger_type: "performance_analysis",
-          scope_flow_type: row.flow_type,
-          action_type: "SCORE_BOOST",
-          action_payload: {
-            flow_type: row.flow_type,
-            boost: 0.1,
-            avg_saves: flowSaves,
-            overall_avg_saves: avgSaves,
-            observation: insight.detail,
-          },
-          confidence: insight.confidence,
-          source_entity_ids: [],
-          evidence_refs: [`performance_flow:${row.flow_type}`],
-          rule_family: "ranking",
-          provenance: "performance_analysis",
-        });
-        insight.rule_created = true;
-        insight.rule_id = ruleId;
-        rulesCreated++;
-      }
-
-      insights.push(insight);
+    if (autoCreateRules) {
+      const magnitude = boostFromLift(g.lift);
+      const isBoost = magnitude > 0;
+      const ruleId = `performance_${isBoost ? "boost" : "penalty"}_${g.group}_${Date.now()}`;
+      await insertLearningRule(db, {
+        rule_id: ruleId,
+        project_id: projectId,
+        trigger_type: "performance_analysis",
+        scope_flow_type: g.group,
+        action_type: isBoost ? "SCORE_BOOST" : "SCORE_PENALTY",
+        action_payload: {
+          flow_type: g.group,
+          ...(isBoost ? { boost: magnitude } : { penalty: magnitude }),
+          metric: metricName,
+          lift: g.lift,
+          shrunk_mean: g.shrunk_mean,
+          raw_mean: g.raw_mean,
+          baseline: stats.baseline,
+          sample_size: g.n,
+          observation: insight.detail,
+        },
+        confidence: insight.confidence,
+        source_entity_ids: [],
+        evidence_refs: [`performance_flow:${g.group}`],
+        rule_family: "ranking",
+        provenance: "performance_analysis",
+      });
+      insight.rule_created = true;
+      insight.rule_id = ruleId;
+      rulesCreated++;
     }
 
-    if (flowSaves < avgSaves * 0.5 && count >= 5) {
-      const insight: PerformanceInsight = {
-        insight_type: "low_performing_flow",
-        scope: row.flow_type,
-        detail: `Flow "${row.flow_type}" avg saves ${flowSaves.toFixed(1)} vs overall ${avgSaves.toFixed(1)} (${count} samples)`,
-        confidence: Math.min(0.9, 0.5 + count * 0.04),
-        sample_size: count,
-        rule_created: false,
-      };
-
-      if (autoCreateRules) {
-        const ruleId = `performance_penalty_${row.flow_type}_${Date.now()}`;
-        await insertLearningRule(db, {
-          rule_id: ruleId,
-          project_id: projectId,
-          trigger_type: "performance_analysis",
-          scope_flow_type: row.flow_type,
-          action_type: "SCORE_PENALTY",
-          action_payload: {
-            flow_type: row.flow_type,
-            penalty: -0.1,
-            avg_saves: flowSaves,
-            overall_avg_saves: avgSaves,
-            observation: insight.detail,
-          },
-          confidence: insight.confidence,
-          source_entity_ids: [],
-          evidence_refs: [`performance_flow:${row.flow_type}`],
-          rule_family: "ranking",
-          provenance: "performance_analysis",
-        });
-        insight.rule_created = true;
-        insight.rule_id = ruleId;
-        rulesCreated++;
-      }
-
-      insights.push(insight);
-    }
+    insights.push(insight);
   }
 
   return {

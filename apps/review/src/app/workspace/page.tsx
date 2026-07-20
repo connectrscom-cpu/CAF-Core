@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { BrandCard } from "@/components/marketer/BrandCard";
+import { LoadingWithTip, PageTip } from "@/components/marketer/PageTip";
 import { MARKETER_LABELS } from "@/lib/marketer/language";
 import { WORKSPACE_FUNNEL_STEPS } from "@/lib/marketer/onboarding";
 import type { BrandSummary } from "@/lib/marketer/types";
@@ -104,15 +105,15 @@ export default function WorkspacePage() {
           <div className="workspace-setup-downloads" data-agent-id="workspace-setup-downloads">
             <p className="workspace-muted">
               <strong>Recommended:</strong> download the project setup checklist → paste it into your brand’s ChatGPT
-              project → upload the filled pack below. Content routes are chosen in that pack. Visual/product{" "}
-              <em>image</em> files use the separate asset checklists.
+              project → upload the filled pack below. Content routes and product fields (§7–§8) are in that pack.
+              Visual/product <em>image</em> files use the separate asset checklists.
             </p>
             <ul className="workspace-setup-download-list">
               <li>
                 <a href="/setup/PROJECT_SETUP_CHECKLIST.md" download>
                   Project setup checklist
                 </a>{" "}
-                — strategy, voice, content routes, research (fill &amp; upload)
+                — strategy, voice, routes, research, product copy (§7–§8)
               </li>
               <li>
                 <a href="/setup/BRAND_BIBLE_ASSET_CHECKLIST.md" download>
@@ -220,7 +221,7 @@ export default function WorkspacePage() {
           {!loading && <span className="workspace-count">{brands.length} total</span>}
         </div>
         {error && <p className="workspace-error">{error}</p>}
-        {loading && <p className="workspace-muted">Loading your brands…</p>}
+        {loading && <LoadingWithTip page="workspace" label="Loading your brands…" />}
         {!loading && brands.length === 0 && (
           <div className="workspace-empty">
             <h3>No brands yet</h3>
@@ -228,6 +229,7 @@ export default function WorkspacePage() {
             <button type="button" className="btn-primary" onClick={() => setShowCreate(true)}>
               New brand
             </button>
+            <PageTip page="workspace" salt="empty" />
           </div>
         )}
         {!loading && brands.length > 0 && (

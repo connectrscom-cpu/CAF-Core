@@ -11,6 +11,7 @@ import { ReviewChromeMessageSync } from "@/components/ReviewChromeMessageSync";
 import { ReviewMobileChromeBar } from "@/components/ReviewMobileChromeBar";
 import { ChromePanelToggle } from "@/components/ChromePanelToggle";
 import { useReviewChromeLayout } from "@/lib/review-chrome-layout";
+import { useThemeStorageSync } from "@/lib/theme";
 import { useMobileLayout } from "@/lib/use-mobile-layout";
 import { isOperatorMode } from "@/lib/marketer/debug";
 import { clientSearchParams, useClientSearchQuery } from "@/lib/use-client-search-query";
@@ -18,7 +19,10 @@ import { clientSearchParams, useClientSearchQuery } from "@/lib/use-client-searc
 const MOBILE_NAV_INIT_KEY = "caf-review-mobile-nav-init";
 
 function ShellInner({ children }: { children: React.ReactNode }) {
+  useThemeStorageSync();
   const pathname = usePathname();
+  const isAuthSurface =
+    pathname === "/login" || pathname === "/signup" || pathname.startsWith("/invite/");
   const searchQuery = useClientSearchQuery();
   const searchParams = clientSearchParams(searchQuery);
   const embeddedInAdmin = searchParams.get("embed") === "admin";
@@ -26,12 +30,13 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   const isMobile = useMobileLayout();
   const { layout, ready, toggleSidebar, openSidebar, closeSidebar } = useReviewChromeLayout();
   const hideSidebar = ready && layout.hideReviewSidebar && !embeddedInAdmin;
-  const showMobileChrome = isMobile && !embeddedInAdmin && hideSidebar;
-  const sidebarOpenOnMobile = isMobile && !hideSidebar;
-  const renderSidebar = !embeddedInAdmin && (isMobile || !hideSidebar);
+  const showMobileChrome = isMobile && !embeddedInAdmin && hideSidebar && !isAuthSurface;
+  const sidebarOpenOnMobile = isMobile && !hideSidebar && !isAuthSurface;
+  const renderSidebar = !embeddedInAdmin && !isAuthSurface && (isMobile || !hideSidebar);
   const prevPathname = useRef(pathname);
 
   useEffect(() => {
+    if (isAuthSurface) return;
     if (!isMobile || !ready || embeddedInAdmin) return;
     try {
       if (sessionStorage.getItem(MOBILE_NAV_INIT_KEY)) return;
@@ -40,14 +45,39 @@ function ShellInner({ children }: { children: React.ReactNode }) {
     } catch {
       /* ignore private mode */
     }
-  }, [closeSidebar, embeddedInAdmin, isMobile, layout.hideReviewSidebar, ready]);
+  }, [closeSidebar, embeddedInAdmin, isAuthSurface, isMobile, layout.hideReviewSidebar, ready]);
 
   useEffect(() => {
+    if (isAuthSurface) return;
     if (!isMobile || !ready || embeddedInAdmin) return;
     if (prevPathname.current === pathname) return;
     prevPathname.current = pathname;
     if (!layout.hideReviewSidebar) closeSidebar();
-  }, [closeSidebar, embeddedInAdmin, isMobile, layout.hideReviewSidebar, pathname, ready]);
+  }, [closeSidebar, embeddedInAdmin, isAuthSurface, isMobile, layout.hideReviewSidebar, pathname, ready]);
+
+  useEffect(() => {
+    if (!sidebarOpenOnMobile) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeSidebar();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [closeSidebar, sidebarOpenOnMobile]);
+
+  useEffect(() => {
+    if (!sidebarOpenOnMobile) return;
+    const prev = document.body.style.overflow;
+    document.body.classList.add("body-scroll-locked");
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.classList.remove("body-scroll-locked");
+      document.body.style.overflow = prev;
+    };
+  }, [sidebarOpenOnMobile]);
+
+  if (isAuthSurface) {
+    return <>{children}</>;
+  }
 
   const shellClass = [
     embeddedInAdmin
@@ -72,7 +102,9 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   return (
     <ReviewProjectProvider>
       <ReviewChromeMessageSync />
-      {showMobileChrome ? <ReviewMobileChromeBar onOpenNav={openSidebar} operator={operator} /> : null}
+      {showMobileChrome ? (
+        <ReviewMobileChromeBar onOpenNav={openSidebar} operator={operator} navOpen={false} />
+      ) : null}
       {sidebarOpenOnMobile ? (
         <button
           type="button"
@@ -91,7 +123,13 @@ function ShellInner({ children }: { children: React.ReactNode }) {
         />
       ) : null}
       <div className={shellClass} data-agent-id="app-shell">
-        {renderSidebar ? (operator ? <Sidebar /> : <MarketerSidebar />) : null}
+        {renderSidebar ? (
+          operator ? (
+            <Sidebar mobileDrawerOpen={sidebarOpenOnMobile} />
+          ) : (
+            <MarketerSidebar mobileDrawerOpen={sidebarOpenOnMobile} />
+          )
+        ) : null}
         <main className={mainClass} data-agent-id="main-content">
           <Suspense fallback={<p className="workspace-muted" style={{ padding: 28 }}>Loading page…</p>}>
             <div key={pathname} className="main-content-route">

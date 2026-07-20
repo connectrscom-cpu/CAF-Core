@@ -8,6 +8,7 @@ import {
   getEditorialNotes,
   getLearningContextPreview,
   getLearningObservations,
+  getLearningRuleEffectiveness,
   getLearningRules,
   getLearningTransparency,
   getLlmApprovalReviews,
@@ -43,6 +44,17 @@ export async function GET(req: NextRequest) {
     const platform = req.nextUrl.searchParams.get("platform") ?? undefined;
     const data = await getLearningContextPreview(projectSlug, flowType, platform);
     if (!data) return NextResponse.json({ error: "Failed to fetch context preview" }, { status: 502 });
+    return NextResponse.json(data);
+  }
+
+  if (section === "effectiveness") {
+    const windowDays = req.nextUrl.searchParams.get("window_days");
+    const minDecided = req.nextUrl.searchParams.get("min_decided");
+    const data = await getLearningRuleEffectiveness(projectSlug, {
+      window_days: windowDays ? parseInt(windowDays, 10) : undefined,
+      min_decided: minDecided ? parseInt(minDecided, 10) : undefined,
+    });
+    if (!data) return NextResponse.json({ error: "Failed to fetch rule effectiveness" }, { status: 502 });
     return NextResponse.json(data);
   }
 

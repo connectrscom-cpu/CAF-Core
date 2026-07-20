@@ -4,7 +4,7 @@
 
 **Convention:** Paths are from the **repository root**. Schema is **`caf_core`**.
 
-> **Updated current-state note (2026-07):** This merged guide may lag **BVS**, **New Visual** (`FLOW_VISUAL_FIRST_CAROUSEL` / `execution_mode: new_visual`), and **Why Mimic**. For repo-derived truth, start with **`docs/CAF_CURRENT_STATE_CONTEXT_PACK.md`**.
+> **Updated current-state note (2026-07-16):** This merged guide may lag **content routes**, **text/UGC flows**, **LinkedIn research**, **BVS**, **New Visual**, and **Why Mimic**. For repo-derived truth, start with **`docs/CAF_CURRENT_STATE_CONTEXT_PACK.md`**. For Fable roadmaps: **`docs/FABLE_IMPROVEMENT_BRIEFING.md`**.
 
 ---
 

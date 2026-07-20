@@ -1,3 +1,4 @@
+import { brandAccessDeniedResponse } from "@/lib/brand-access-guard";
 import { NextRequest, NextResponse } from "next/server";
 import { getContentRoutes, saveContentRoutes } from "@/lib/caf-core-client";
 
@@ -7,6 +8,11 @@ type Ctx = { params: Promise<{ slug: string }> };
 
 export async function GET(_req: NextRequest, ctx: Ctx) {
   const { slug } = await ctx.params;
+  {
+    const denied = await brandAccessDeniedResponse(slug);
+    if (denied) return denied;
+  }
+
   if (!slug) return NextResponse.json({ error: "Missing brand" }, { status: 400 });
   const res = await getContentRoutes(slug);
   if (!res?.ok) {
@@ -17,6 +23,11 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
 
 export async function PUT(req: NextRequest, ctx: Ctx) {
   const { slug } = await ctx.params;
+  {
+    const denied = await brandAccessDeniedResponse(slug);
+    if (denied) return denied;
+  }
+
   if (!slug) return NextResponse.json({ error: "Missing brand" }, { status: 400 });
   const body = (await req.json()) as { enabled_lane_ids?: string[]; target_idea_count?: number };
   if (!Array.isArray(body.enabled_lane_ids)) {

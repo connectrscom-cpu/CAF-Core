@@ -1,6 +1,11 @@
 "use client";
 
-import type { BrandSlideFrameOption } from "@/lib/brand-asset-url";
+import type {
+  BrandLogoPosition,
+  BrandSlideFrameOption,
+  BrandSlideLogoOption,
+} from "@/lib/brand-asset-url";
+import { BRAND_LOGO_POSITIONS } from "@/lib/brand-asset-url";
 import type { CarouselTypographyPayloadKey } from "@/lib/carousel-slides";
 
 export interface CarouselBrandStylingPanelProps {
@@ -18,8 +23,13 @@ export interface CarouselBrandStylingPanelProps {
   onCarouselHandleFontPxChange: (value: string) => void;
   brandPalette?: string[];
   brandLogoDisplayUrl?: string;
+  brandLogos?: BrandSlideLogoOption[];
   logoEnabled: boolean;
   onLogoEnabledChange: (enabled: boolean) => void;
+  selectedLogoAssetId?: string;
+  onSelectedLogoAssetIdChange?: (assetId: string) => void;
+  logoPosition?: BrandLogoPosition;
+  onLogoPositionChange?: (position: BrandLogoPosition) => void;
   brandFrames?: BrandSlideFrameOption[];
   frameEnabled: boolean;
   onFrameEnabledChange: (enabled: boolean) => void;
@@ -64,8 +74,13 @@ export function CarouselBrandStylingPanel({
   onCarouselHandleFontPxChange,
   brandPalette = [],
   brandLogoDisplayUrl = "",
+  brandLogos = [],
   logoEnabled,
   onLogoEnabledChange,
+  selectedLogoAssetId = "",
+  onSelectedLogoAssetIdChange,
+  logoPosition = "br",
+  onLogoPositionChange,
   brandFrames = [],
   frameEnabled,
   onFrameEnabledChange,
@@ -79,6 +94,10 @@ export function CarouselBrandStylingPanel({
   variant = "carousel",
   className,
 }: CarouselBrandStylingPanelProps) {
+  const selectedLogo =
+    brandLogos.find((l) => l.assetId === selectedLogoAssetId) ?? brandLogos[0] ?? null;
+  const logoPreviewUrl = selectedLogo?.displayUrl?.trim() || brandLogoDisplayUrl.trim();
+  const hasLogoOption = brandLogos.length > 0 || Boolean(logoPreviewUrl);
   const pxValues: Record<CarouselTypographyPayloadKey, string> = {
     carousel_headline_font_px: carouselHeadlineFontPx,
     carousel_body_font_px: carouselBodyFontPx,
@@ -127,7 +146,7 @@ export function CarouselBrandStylingPanel({
       {variant === "carousel" && showTypographyPx ? (
         <div style={{ marginBottom: 12 }}>
           <label className="filter-label">Typography (px, optional)</label>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <div className="mobile-stack-grid mobile-stack-grid--tight">
             {PX_FIELDS.map((field) => (
               <label key={field.key} style={{ fontSize: 12, gridColumn: field.fullWidth ? "1 / -1" : undefined }}>
                 {field.label}
@@ -167,7 +186,7 @@ export function CarouselBrandStylingPanel({
               />
             ))}
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
+          <div className="mobile-stack-grid mobile-stack-grid--tight" style={{ marginTop: 8 }}>
             <label style={{ fontSize: 12 }}>
               Paper / background
               <div style={{ display: "flex", gap: 6, marginTop: 4, alignItems: "center" }}>
@@ -207,15 +226,57 @@ export function CarouselBrandStylingPanel({
         </div>
       ) : null}
 
-      {brandLogoDisplayUrl.trim() ? (
+      {hasLogoOption ? (
         <div style={{ marginBottom: 12 }}>
           <label className="mimic-layer-editor-panel__option">
             <input type="checkbox" checked={logoEnabled} onChange={(e) => onLogoEnabledChange(e.target.checked)} />
-            <span>Stamp brand logo (lower-right)</span>
+            <span>Stamp brand logo</span>
           </label>
-          {logoEnabled ? (
+          {logoEnabled && onLogoPositionChange ? (
+            <div className="brand-logo-corner-picker" title="Logo corner" role="group" aria-label="Logo corner">
+              {BRAND_LOGO_POSITIONS.map((corner) => {
+                const active = corner.id === logoPosition;
+                return (
+                  <button
+                    key={corner.id}
+                    type="button"
+                    className={`brand-logo-corner-picker__item${active ? " brand-logo-corner-picker__item--active" : ""}`}
+                    title={corner.label}
+                    aria-label={corner.label}
+                    aria-pressed={active}
+                    onClick={() => onLogoPositionChange(corner.id)}
+                  >
+                    {corner.short}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+          {logoEnabled && brandLogos.length > 1 && onSelectedLogoAssetIdChange ? (
+            <div className="brand-frame-picker brand-logo-picker" title="Pick a logo">
+              {brandLogos.map((logo) => {
+                const active = logo.assetId === (selectedLogo?.assetId ?? selectedLogoAssetId);
+                return (
+                  <button
+                    key={logo.assetId}
+                    type="button"
+                    className={`brand-frame-picker__item${active ? " brand-frame-picker__item--active" : ""}`}
+                    title={logo.label}
+                    aria-label={logo.label}
+                    aria-pressed={active}
+                    onClick={() => onSelectedLogoAssetIdChange(logo.assetId)}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={logo.displayUrl} alt="" className="brand-logo-picker__img" />
+                    <span>{logo.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+          {logoEnabled && logoPreviewUrl && brandLogos.length <= 1 ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={brandLogoDisplayUrl} alt="Brand logo" className="brand-logo-chip" />
+            <img src={logoPreviewUrl} alt="Brand logo" className="brand-logo-chip" />
           ) : null}
         </div>
       ) : null}

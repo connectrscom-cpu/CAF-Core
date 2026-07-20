@@ -64,7 +64,7 @@ import {
   listInputsIdeasForList,
 } from "../repositories/inputs-idea-lists.js";
 import { synthesizeIdeasJsonFromInsightsLlm } from "../services/ideas-from-insights-llm.js";
-import { buildSignalPackFromIdeaList, type IdeaFormatLimits } from "../services/idea-list-to-signal-pack.js";
+import { buildSignalPackFromIdeaList, buildResearchBriefPackFromImport, type IdeaFormatLimits } from "../services/idea-list-to-signal-pack.js";
 
 function enrichEvidenceInsightRowsForApi(
   rows: Array<EvidenceRowInsightEnrichedRow & { evidence_payload_json?: unknown }>
@@ -1078,6 +1078,11 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
       .object({
         /** If set, build a pack from this stored idea list (separate step from idea generation). */
         idea_list_id: z.string().uuid().optional(),
+        /**
+         * Research brief only — market intelligence from insights, empty ideas_json.
+         * Ideas are created later from Market Intelligence.
+         */
+        brief_only: z.boolean().optional(),
         run_name: z.string().max(200).optional(),
         notes: z.string().max(4000).optional(),
         /** Per-format caps (0 = none; omit key = unlimited in that bucket). Omitted / empty = all ideas. */
@@ -1095,6 +1100,13 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
       .safeParse(request.body ?? {});
     if (!body.success) return reply.code(400).send({ ok: false, error: "invalid_body", details: body.error.flatten() });
     try {
+      if (body.data.brief_only) {
+        const out = await buildResearchBriefPackFromImport(db, config, params.data.project_slug, params.data.import_id, {
+          run_name: body.data.run_name ?? null,
+          notes: body.data.notes ?? null,
+        });
+        return { ok: true, ...out };
+      }
       if (body.data.idea_list_id) {
         const fl = body.data.format_limits;
         const hasLimits = fl && Object.values(fl).some((v) => v !== undefined);

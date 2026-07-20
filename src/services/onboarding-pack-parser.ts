@@ -11,6 +11,14 @@ export type OnboardingSectionKey =
   | "visual"
   | "research"
   | "formats"
+  | "product"
+  | "product_bible"
+  | "platforms"
+  | "system_limits"
+  | "flow_types"
+  | "video_defaults"
+  | "heygen_advanced"
+  | "prompts"
   | "publishing"
   | "compliance"
   | "gaps";
@@ -45,7 +53,7 @@ const SECTION_ALIASES: Array<{ key: OnboardingSectionKey; patterns: RegExp[] }> 
   },
   {
     key: "voice",
-    patterns: [/voice\s*(?:&|and)\s*(?:compliance|copy)/i, /^voice$/i],
+    patterns: [/voice\s*(?:&|and)\s*(?:compliance|copy)/i, /^voice$/i, /^brand$/i],
   },
   {
     key: "visual",
@@ -64,6 +72,42 @@ const SECTION_ALIASES: Array<{ key: OnboardingSectionKey; patterns: RegExp[] }> 
     ],
   },
   {
+    key: "product",
+    patterns: [
+      /^product\s*\(video\s*flows?\)$/i,
+      /^product\s*(?:profile|pack)?$/i,
+      /product\s*\(video/i,
+    ],
+  },
+  {
+    key: "product_bible",
+    patterns: [/^product\s*bible$/i, /product\s*bible\s*\(text\)/i],
+  },
+  {
+    key: "platforms",
+    patterns: [/^platforms?$/i, /^instagram$/i],
+  },
+  {
+    key: "system_limits",
+    patterns: [/system\s*limits?/i, /^constraints$/i],
+  },
+  {
+    key: "flow_types",
+    patterns: [/^flow\s*types?$/i],
+  },
+  {
+    key: "video_defaults",
+    patterns: [/video\s*defaults?/i, /heygen\s*defaults?/i],
+  },
+  {
+    key: "heygen_advanced",
+    patterns: [/heygen\s*\(advanced\)/i, /^heygen\s*advanced$/i],
+  },
+  {
+    key: "prompts",
+    patterns: [/^prompts?$/i, /project\s*prompts?/i],
+  },
+  {
     key: "publishing",
     patterns: [/^publishing$/i],
   },
@@ -73,7 +117,12 @@ const SECTION_ALIASES: Array<{ key: OnboardingSectionKey; patterns: RegExp[] }> 
   },
   {
     key: "gaps",
-    patterns: [/gaps?\s*(?:&|and)\s*next\s*steps?/i, /gaps?\s*&\s*recommendations/i],
+    patterns: [
+      /gaps?\s*(?:&|and)\s*next\s*steps?/i,
+      /gaps?\s*&\s*recommendations/i,
+      /known\s*facts\s*vs\s*recommendations\s*vs\s*gaps/i,
+      /^next\s*steps$/i,
+    ],
   },
 ];
 
@@ -126,12 +175,18 @@ export function isGapValue(value: string): boolean {
   return /^\[GAP\b/i.test(v) || /\bGAP\s*[—–-]\s*not in project knowledge\b/i.test(v);
 }
 
+/** Strip leading [FACT] / [REC] tags from filled pack values (incl. [FACT-derived], [FACT — …]). */
+export function stripFactRecPrefix(value: string): string {
+  return value.replace(/^\[(?:FACT|REC)[^\]]*\]\s*/i, "").trim();
+}
+
 function isSkippableLine(line: string): boolean {
   const t = line.trim();
   if (!t) return true;
   if (/^>{1,3}\s/.test(t)) return true;
   if (/^---+$/.test(t)) return true;
   if (/^#+\s*CAF Project Onboarding Pack/i.test(t)) return true;
+  if (/^#+\s*Brand Onboarding Pack/i.test(t)) return true;
   if (/^Compiled from\b/i.test(t)) return true;
   if (/^Readiness:\s*/i.test(t)) return true;
   return false;
@@ -140,8 +195,14 @@ function isSkippableLine(line: string): boolean {
 function isSectionHeaderLine(line: string): boolean {
   const t = line.trim();
   if (!t) return false;
+  // Markdown numbered headings are always section breaks (`## 7. Product …`).
   if (/^#{1,3}\s*\d+\.\s+\S/.test(t)) return true;
-  if (/^\d+\.\s+[A-Z]/.test(t) && !FIELD_LINE_RE.test(t)) return true;
+  // Bare `N. Title` only when Title resolves to a known pack section — not numbered
+  // example captions like `2. Saw a recipe in a cooking video…`.
+  const bare = t.match(/^(\d+)\.\s+(.+)$/);
+  if (bare && !FIELD_LINE_RE.test(t)) {
+    return resolveSectionKey(bare[2]!) != null;
+  }
   return false;
 }
 
@@ -193,7 +254,7 @@ function parseSectionFields(body: string): Record<string, string> {
 
   const flush = () => {
     if (!currentKey) return;
-    const value = currentValue.join("\n").trim();
+    const value = stripFactRecPrefix(currentValue.join("\n").trim());
     if (value && !isGapValue(value)) {
       fields[currentKey] = fields[currentKey] ? `${fields[currentKey]}\n${value}` : value;
     } else if (isGapValue(value)) {
@@ -322,11 +383,13 @@ export function parseOnboardingPack(text: string): ParsedOnboardingPack {
     return result;
   }
 
-  const titleMatch = normalized.match(/^#\s+CAF Project Onboarding Pack\s*[—–-]\s*(.+)$/m);
+  const titleMatch =
+    normalized.match(/^#\s+CAF Project Onboarding Pack\s*[—–-]\s*(.+)$/m) ??
+    normalized.match(/^#\s+Brand Onboarding Pack\s*[—–-]\s*(.+)$/m);
   if (titleMatch) result.title = titleMatch[1]!.trim();
 
   const readinessMatch = normalized.match(/^>\s*Readiness:\s*(.+)$/im)
-    ?? normalized.match(/Readiness:\s*(MVP|Production-ready|Not ready)/i);
+    ?? normalized.match(/Readiness:\s*(Draft|MVP|Production-ready|Not ready)/i);
   if (readinessMatch) result.readiness = readinessMatch[1]!.trim();
 
   const rawSections = splitIntoSections(normalized);
