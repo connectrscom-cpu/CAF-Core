@@ -23,6 +23,7 @@ import { pickGeneratedOutput } from "../domain/generation-payload-output.js";
 import { composeMimicCarouselDraftPackage } from "../domain/mimic-carousel-package.js";
 import type { MimicPayloadV1, MimicSlidePlan } from "../domain/mimic-payload.js";
 import { mergeMimicPayloadSlice, pickMimicPayload } from "../domain/mimic-payload.js";
+import { attachProductEvidenceUrlsToMimicPayload } from "../domain/product-bible-v1.js";
 import {
   templateBgAssetPositionForSlot,
   templateBgSlotForIndex,
@@ -222,6 +223,7 @@ export async function prepareFlowCarouselBvsDraftPackage(
   });
   mimic = enrichMimicWithBvsRenderPlan(mimic, bvs.bible_snapshot);
   mimic = withBvsTextCarouselBackgroundMode(mimic, bvs.bible_snapshot);
+  mimic = attachProductEvidenceUrlsToMimicPayload(job.generation_payload, mimic, { candidateData });
 
   const mimicRender = await loadProjectMimicRenderSettings(db, job.project_id, config);
   const composed = composeMimicCarouselDraftPackage(

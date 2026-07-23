@@ -378,6 +378,8 @@ export function registerRunRoutes(app: FastifyInstance, deps: { db: Pool; config
             insights_id: n.insights_id,
             mimic_kind: n.mimic_kind,
             ...(p.video_intent ? { video_intent: p.video_intent } : {}),
+            ...(p.heygen_avatar_id ? { heygen_avatar_id: p.heygen_avatar_id } : {}),
+            ...(p.heygen_voice_id ? { heygen_voice_id: p.heygen_voice_id } : {}),
           };
         }),
       };

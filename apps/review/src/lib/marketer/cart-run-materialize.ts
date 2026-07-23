@@ -7,6 +7,8 @@ export type CartMimicPick = {
   insights_id: string;
   mimic_kind: "carousel" | "why_carousel" | "video" | "image";
   video_intent?: VideoPipelineIntent;
+  heygen_avatar_id?: string;
+  heygen_voice_id?: string;
 };
 
 export type CartIdeaPick = {
@@ -14,6 +16,8 @@ export type CartIdeaPick = {
   target_flow_type: string;
   platform?: string;
   use_brand_visual_system?: boolean;
+  heygen_avatar_id?: string;
+  heygen_voice_id?: string;
 };
 
 export type CartMaterializeBody = {
@@ -37,7 +41,22 @@ export type CartManifestLine = {
   insights_id?: string;
   mimic_kind?: CartMimicPick["mimic_kind"];
   video_intent?: VideoPipelineIntent;
+  heygen_avatar_id?: string;
+  heygen_voice_id?: string;
 };
+
+function cartHeygenPresenterFields(item: ContentCartItem): {
+  heygen_avatar_id?: string;
+  heygen_voice_id?: string;
+} {
+  const avatar = String(item.heygenAvatarId ?? "").trim();
+  if (!avatar) return {};
+  const voice = String(item.heygenVoiceId ?? "").trim();
+  return {
+    heygen_avatar_id: avatar,
+    ...(voice ? { heygen_voice_id: voice } : {}),
+  };
+}
 
 export type CartMimicRenderOverride = {
   insights_id: string;
@@ -66,6 +85,7 @@ export function cartTopPerformerToMimicPick(item: ContentCartItem): CartMimicPic
       insights_id: insightsId,
       mimic_kind: "video",
       ...(video_intent ? { video_intent } : {}),
+      ...cartHeygenPresenterFields(item),
     };
   }
 
@@ -102,6 +122,7 @@ export function cartItemsToMaterializeBody(items: ContentCartItem[]): CartMateri
           target_flow_type: flowType,
           ...(item.platform ? { platform: item.platform } : {}),
           use_brand_visual_system: item.useBrandVisualSystem !== false,
+          ...cartHeygenPresenterFields(item),
         });
       }
       continue;
@@ -130,6 +151,7 @@ export function buildCartManifest(items: ContentCartItem[]): CartManifestLine[] 
         use_brand_visual_system: item.useBrandVisualSystem !== false,
         ...(item.linkedinAspectRatio ? { linkedin_aspect_ratio: item.linkedinAspectRatio } : {}),
         ...(item.linkedinImageCount != null ? { linkedin_image_count: item.linkedinImageCount } : {}),
+        ...cartHeygenPresenterFields(item),
       };
     }
     const pick = cartTopPerformerToMimicPick(item);
@@ -144,6 +166,7 @@ export function buildCartManifest(items: ContentCartItem[]): CartManifestLine[] 
       insights_id: pick?.insights_id,
       mimic_kind: pick?.mimic_kind,
       ...(pick?.video_intent ? { video_intent: pick.video_intent } : {}),
+      ...cartHeygenPresenterFields(item),
     };
   });
 }

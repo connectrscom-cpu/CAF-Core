@@ -15,6 +15,7 @@ import {
 } from "../domain/new-visual-carousel-execution.js";
 import type { MimicPayloadV1 } from "../domain/mimic-payload.js";
 import { MIMIC_PAYLOAD_KEY, mergeMimicPayloadSlice } from "../domain/mimic-payload.js";
+import { attachProductEvidenceUrlsToMimicPayload } from "../domain/product-bible-v1.js";
 import { isVisualFirstCarouselFlow } from "../domain/visual-first-carousel-flow-types.js";
 import { buildMimicRenderSettingsSnapshot, loadProjectMimicRenderSettings } from "./mimic-project-config.js";
 import { logPipelineEvent } from "./pipeline-logger.js";
@@ -129,12 +130,13 @@ export async function ensureNewVisualCarouselBeforeCopyGeneration(
   const candidateData = candidateFromPayload(gp);
   const slideCount = inferNewVisualTargetSlideCount(candidateData);
   const bvs = await resolveBvsForEnabledJob(db, job.project_id, gp);
-  const mimic = buildNewVisualCarouselMimicPayload({
+  let mimic = buildNewVisualCarouselMimicPayload({
     candidateData,
     bvsEnabled: bvs?.enabled === true,
     bvsSnapshot: bvs?.bible_snapshot ? (bvs.bible_snapshot as unknown as Record<string, unknown>) : null,
     slideCount,
   });
+  mimic = attachProductEvidenceUrlsToMimicPayload(gp, mimic, { candidateData });
 
   const mimicRender = await loadProjectMimicRenderSettings(db, job.project_id, config);
   const renderSettings = buildMimicRenderSettingsSnapshot(config, {
@@ -167,6 +169,7 @@ export async function ensureNewVisualCarouselBeforeCopyGeneration(
       slide_count: slideCount,
       bvs_enabled: mimic.bvs_enabled === true,
       execution_mode: MIMIC_EXECUTION_MODE_NEW_VISUAL,
+      product_evidence_refs: mimic.product_evidence_reference_urls?.length ?? 0,
     },
   });
 

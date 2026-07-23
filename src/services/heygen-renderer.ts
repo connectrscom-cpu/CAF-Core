@@ -24,11 +24,11 @@ import {
   productBibleSnapshotToHeygenFiles,
   resolveHeygenVideoAgentBodyFiles,
 } from "./brand-heygen-files.js";
+import { buildProductBibleVideoAgentPromptBlock } from "../domain/product-bible.js";
 import {
-  buildProductBibleVideoAgentPromptBlock,
-  resolveHeygenProductReferenceAssets,
-} from "../domain/product-bible.js";
-import { resolveProductBibleForEnabledJob } from "../domain/product-bible-v1.js";
+  resolveProductBibleForEnabledJob,
+  selectProductEvidenceForPayload,
+} from "../domain/product-bible-v1.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import { buildProductVideoAgentBrandPromptBlock } from "./product-video-agent-brand.js";
 import { buildProductProfileVideoAgentPromptBlock } from "./product-video-agent-product.js";
@@ -501,10 +501,16 @@ function mergeCharacterWithAvatarId(
 /**
  * Resolves Sheets-style avatar pools (`prompt_avatar_pool_json` / `script_avatar_pool_json`) into
  * `character` + top-level voice ids. Skips avatar injection for no-avatar flows.
+ * When `forcePresenter` is set (cart / candidate assignment), that avatar+voice wins over the pool lottery.
  */
 export function applyHeygenAvatarFromSheetConfig(
   body: Record<string, unknown>,
-  opts: { flowType?: string | null; pickSeed?: string | null; preferProductUgcPool?: boolean }
+  opts: {
+    flowType?: string | null;
+    pickSeed?: string | null;
+    preferProductUgcPool?: boolean;
+    forcePresenter?: { avatar_id: string; voice_id?: string } | null;
+  }
 ): void {
   const ft = opts.flowType ?? "";
   if (/no_avatar|heygen_no|HEYGEN_NO_AVATAR|NoAvatar/i.test(ft)) return;
@@ -512,6 +518,19 @@ export function applyHeygenAvatarFromSheetConfig(
   const scriptLed = isScriptLedHeygenFlow(ft);
   const promptLed = isPromptLedHeygenFlow(ft);
   const ugcLed = /\bFLOW_VID_UGC\b/i.test(ft) || /ugc_video|VID_UGC/i.test(ft);
+
+  const forcedAvatar = String(opts.forcePresenter?.avatar_id ?? "").trim();
+  if (forcedAvatar) {
+    applyPickedHeygenPresenter(
+      body,
+      {
+        avatar_id: forcedAvatar,
+        voice_id: String(opts.forcePresenter?.voice_id ?? "").trim(),
+      },
+      scriptLed
+    );
+    return;
+  }
 
   /** Prefer flow-specific pool key first, then shared pools — one `prompt_avatar_pool_json` can back both script and prompt avatar flows. */
   const poolKeys = ugcLed
@@ -546,24 +565,7 @@ export function applyHeygenAvatarFromSheetConfig(
     // Voice is resolved from the picked entry first, so avatar+voice pairing is preserved when provided.
     const idx = seed ? stablePickIndex(seed, pool.length) : Math.floor(Math.random() * pool.length);
     const picked = pool[idx]!;
-    const pickedHasVoice = Boolean(String(picked.voice_id ?? "").trim());
-    if (scriptLed && !pickedHasVoice) {
-      for (const vk of ["voice", "voice_id", "default_voice", "default_voice_id"] as const) {
-        delete body[vk];
-      }
-    }
-    const voiceId = resolveVoiceIdForPoolEntry(body, picked, scriptLed);
-    body.character = mergeCharacterWithAvatarId(body, picked.avatar_id);
-    if (voiceId) {
-      body.voice_id = voiceId;
-      body.voice = voiceId;
-    } else {
-      delete body.voice_id;
-      delete body.voice;
-      if (scriptLed && !pickedHasVoice) {
-        body.heygen_allow_missing_voice_for_avatar = true;
-      }
-    }
+    applyPickedHeygenPresenter(body, picked, scriptLed);
     return;
   }
 
@@ -586,6 +588,92 @@ export function applyHeygenAvatarFromSheetConfig(
       body.voice_id = sv;
       body.voice = sv;
     }
+  }
+}
+
+function applyPickedHeygenPresenter(
+  body: Record<string, unknown>,
+  picked: HeygenAvatarPoolEntry,
+  scriptLed: boolean
+): void {
+  const pickedHasVoice = Boolean(String(picked.voice_id ?? "").trim());
+  if (scriptLed && !pickedHasVoice) {
+    for (const vk of ["voice", "voice_id", "default_voice", "default_voice_id"] as const) {
+      delete body[vk];
+    }
+  }
+  const voiceId = resolveVoiceIdForPoolEntry(body, picked, scriptLed);
+  body.character = mergeCharacterWithAvatarId(body, picked.avatar_id);
+  body.avatar_id = picked.avatar_id;
+  body.script_avatar_id = picked.avatar_id;
+  body.prompt_avatar_id = picked.avatar_id;
+  if (voiceId) {
+    body.voice_id = voiceId;
+    body.voice = voiceId;
+  } else {
+    delete body.voice_id;
+    delete body.voice;
+    if (scriptLed && !pickedHasVoice) {
+      body.heygen_allow_missing_voice_for_avatar = true;
+    }
+  }
+}
+
+/**
+ * Cart / candidate assignment: `heygen_avatar_id` (+ optional paired `heygen_voice_id`) on candidate_data.
+ * Review overrides live on `generation_payload.heygen_request` and still win after pool/force apply.
+ */
+export function pickAssignedHeygenPresenterFromPayload(
+  generationPayload: Record<string, unknown> | null | undefined
+): { avatar_id: string; voice_id?: string } | null {
+  if (!generationPayload || typeof generationPayload !== "object") return null;
+  const cand =
+    generationPayload.candidate_data &&
+    typeof generationPayload.candidate_data === "object" &&
+    !Array.isArray(generationPayload.candidate_data)
+      ? (generationPayload.candidate_data as Record<string, unknown>)
+      : null;
+  const avatar =
+    trimConfigString(cand?.heygen_avatar_id) ??
+    trimConfigString(cand?.heygenAvatarId) ??
+    trimConfigString(cand?.avatar_id);
+  if (!avatar) return null;
+  const voice =
+    trimConfigString(cand?.heygen_voice_id) ??
+    trimConfigString(cand?.heygenVoiceId) ??
+    trimConfigString(cand?.voice_id) ??
+    undefined;
+  return voice ? { avatar_id: avatar, voice_id: voice } : { avatar_id: avatar };
+}
+
+/** After review `heygen_request` overrides top-level avatar_id, keep `character` / video_inputs in sync. */
+export function syncHeygenCharacterFromTopLevelAvatarIds(body: Record<string, unknown>): void {
+  const avatarId =
+    trimConfigString(body.avatar_id) ??
+    trimConfigString(body.script_avatar_id) ??
+    trimConfigString(body.prompt_avatar_id);
+  if (!avatarId) return;
+  body.character = mergeCharacterWithAvatarId(body, avatarId);
+  const vi = body.video_inputs;
+  if (!Array.isArray(vi) || vi.length === 0) return;
+  const first = vi[0];
+  if (!first || typeof first !== "object" || Array.isArray(first)) return;
+  const row = first as Record<string, unknown>;
+  row.character = mergeCharacterWithAvatarId(
+    { character: row.character },
+    avatarId
+  );
+  const voiceId =
+    trimConfigString(body.voice_id) ??
+    trimConfigString(body.script_voice_id) ??
+    trimConfigString(body.default_voice_id) ??
+    (typeof body.voice === "string" ? trimConfigString(body.voice) : undefined);
+  if (voiceId) {
+    const existingVoice =
+      row.voice && typeof row.voice === "object" && !Array.isArray(row.voice)
+        ? ({ ...(row.voice as Record<string, unknown>) } as Record<string, unknown>)
+        : { type: "text" };
+    row.voice = { ...existingVoice, type: String(existingVoice.type ?? "text").trim() || "text", voice_id: voiceId };
   }
 }
 
@@ -657,6 +745,8 @@ export function buildHeyGenVideoAgentRequestBody(
     flowType?: string | null;
     taskId?: string | null;
     avatarPickSeed?: string | null;
+    /** Cart / candidate-assigned presenter — skips pool lottery when set. */
+    forcePresenter?: { avatar_id: string; voice_id?: string } | null;
     /** Job platform (e.g. TikTok, Instagram) — included in the production brief OBJECTIVE. */
     platform?: string | null;
     agentMode: HeygenVideoAgentMode;
@@ -676,6 +766,7 @@ export function buildHeyGenVideoAgentRequestBody(
   applyHeygenAvatarFromSheetConfig(merged, {
     flowType: opts.flowType,
     pickSeed: opts.avatarPickSeed ?? opts.taskId,
+    forcePresenter: opts.forcePresenter,
   });
 
   const genUse = opts.agentMode === "no_avatar" ? sanitizeGenForHeygenNoAvatar(gen) : gen;
@@ -746,6 +837,9 @@ export function buildHeyGenVideoAgentRequestBody(
   if (cb) out.callback_url = cb;
 
   const body = override && Object.keys(override).length > 0 ? deepMerge(out, override) : out;
+  if (opts.agentMode === "prompt_avatar") {
+    syncHeygenCharacterFromTopLevelAvatarIds(body);
+  }
   stripInternalHeygenConfigKeys(body);
   if (opts.agentMode === "no_avatar" && "avatar_id" in body) delete body.avatar_id;
 
@@ -1599,6 +1693,8 @@ export function buildHeyGenRequestBody(
     taskId?: string | null;
     /** Overrides taskId for avatar pool hashing (e.g. task_id + scene index). */
     avatarPickSeed?: string | null;
+    /** Cart / candidate-assigned presenter — skips pool lottery when set. */
+    forcePresenter?: { avatar_id: string; voice_id?: string } | null;
     /** Seconds for HeyGen `voice: { type: "silence" }` when there is only a visual prompt (no spoken script). */
     visualOnlySilenceDurationSec?: number;
     /** Prefer product bible UGC hosts over brand UGC hosts. */
@@ -1614,6 +1710,7 @@ export function buildHeyGenRequestBody(
     flowType: opts?.flowType,
     pickSeed: opts?.avatarPickSeed ?? opts?.taskId,
     preferProductUgcPool: opts?.preferProductUgcPool,
+    forcePresenter: opts?.forcePresenter,
   });
 
   if (typeof body.video_inputs === "undefined" && (script || prompt)) {
@@ -1635,6 +1732,7 @@ export function buildHeyGenRequestBody(
 
   if (override && Object.keys(override).length > 0) {
     body = deepMerge(body, override);
+    syncHeygenCharacterFromTopLevelAvatarIds(body);
   }
 
   const viRaw = body.video_inputs;
@@ -1999,6 +2097,7 @@ export async function runHeygenForContentJob(
   const merged = mergeHeygenConfigForJob(rows, job.platform, job.flow_type, renderMode);
   applyHeygenEnvAvatarDefaults(merged, appConfig);
   const override = job.generation_payload.heygen_request as Record<string, unknown> | undefined;
+  const forcePresenter = pickAssignedHeygenPresenterFromPayload(job.generation_payload);
 
   /**
    * For FLOW_PRODUCT_*, the per-project `allowed_flow_types.heygen_mode` (or the baked-in
@@ -2026,6 +2125,7 @@ export async function runHeygenForContentJob(
       taskId: job.task_id,
       visualOnlySilenceDurationSec: appConfig.HEYGEN_VISUAL_ONLY_SILENCE_DURATION_SEC,
       preferProductUgcPool: ugcPreferProductPresenterPool(gen, job.generation_payload),
+      forcePresenter,
     });
     if (firstHeyGenVideoInputUsesSilenceVoice(body)) {
       postPath = "/v2/video/generate";
@@ -2046,6 +2146,7 @@ export async function runHeygenForContentJob(
       taskId: job.task_id,
       platform: job.platform,
       agentMode: renderMode === "HEYGEN_NO_AVATAR" ? "no_avatar" : "prompt_avatar",
+      forcePresenter,
       durationBounds: {
         minSec: appConfig.HEYGEN_AGENT_MIN_DURATION_SEC,
         maxSec: 300,
@@ -2101,8 +2202,27 @@ export async function runHeygenForContentJob(
           job.project_id,
           job.generation_payload
         );
+        if (productSlice?.enabled && productSlice.bible_snapshot) {
+          job.generation_payload.product_bible_v1 = productSlice;
+        }
+        const { selection, assets: productRefs } = selectProductEvidenceForPayload(
+          job.generation_payload,
+          {
+            candidateData: asRecord(job.generation_payload.candidate_data),
+          }
+        );
         const snapshot = productSlice?.enabled ? productSlice.bible_snapshot : null;
-        const productRefs = snapshot ? resolveHeygenProductReferenceAssets(snapshot) : [];
+        if (snapshot && asRecord(job.generation_payload.product_bible_v1)) {
+          const sliceRec = asRecord(job.generation_payload.product_bible_v1)!;
+          sliceRec.selected_evidence = {
+            selection_mode: selection.selection_mode,
+            matched_feature_keys: selection.matched_feature_keys,
+            matched_product_keys: selection.matched_product_keys,
+            matched_labels: selection.matched_labels,
+            asset_ids: productRefs.map((a) => a.asset_id),
+          };
+          job.generation_payload.product_bible_v1 = sliceRec;
+        }
         const existingFileCount = Array.isArray(body.files) ? body.files.length : 0;
         const productBibleBlock = buildProductBibleVideoAgentPromptBlock(snapshot, productRefs, {
           fileIndexOffset: existingFileCount,

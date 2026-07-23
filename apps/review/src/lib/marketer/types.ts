@@ -194,6 +194,14 @@ export interface ContentCartItem {
   renderMode?: "full_bleed" | "template";
   /** Top-performer video lane (HeyGen routing). */
   videoIntent?: VideoPipelineIntent;
+  /**
+   * Optional HeyGen presenter for avatar video lanes.
+   * When set, render uses this avatar; voice comes from the paired `heygenVoiceId`.
+   * When unset, Core picks randomly from the project presenter pool.
+   */
+  heygenAvatarId?: string;
+  /** Paired HeyGen voice for `heygenAvatarId` (auto-filled from Brand/Product Bible presenters). */
+  heygenVoiceId?: string;
   /** When true, stamp Brand Visual System (brand bible) onto this job at plan time. */
   useBrandVisualSystem?: boolean;
   /** LinkedIn document post lane (2–3 companion images). */

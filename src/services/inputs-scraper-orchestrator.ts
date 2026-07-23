@@ -97,6 +97,7 @@ import {
   getTrackedApifyRunIds,
 } from "./inputs-scraper-run-registry.js";
 import { logPipelineEvent } from "./pipeline-logger.js";
+import { writebackFollowersForScraper } from "./inputs-source-followers.js";
 
 export interface ScraperAbortContext {
   projectId: string;
@@ -643,7 +644,11 @@ async function runOneScraper(
   scraperKey: Exclude<ScraperKey, "all">,
   projectConfig: ScraperProjectConfig,
   runOpts?: RunInputsScraperOptions
-): Promise<{ rows: ParsedInputsEvidenceRow[]; apifyRuns: ScraperApifyRunRef[] }> {
+): Promise<{
+  rows: ParsedInputsEvidenceRow[];
+  apifyRuns: ScraperApifyRunRef[];
+  follower_writeback?: Record<string, unknown> | null;
+}> {
   const maxSources = runOpts?.maxSources;
   const abortCtx = runOpts?.abortContext;
   const tab = SCRAPER_SOURCE_TAB[scraperKey];
@@ -696,10 +701,22 @@ async function runOneScraper(
     }
   }
 
+  let follower_writeback: Record<string, unknown> | null = null;
+  try {
+    const wb = await writebackFollowersForScraper(db, projectId, scraperKey, scrapeResult.payloads);
+    if (wb) follower_writeback = wb as unknown as Record<string, unknown>;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    logPipelineEvent("warn", "other", `source follower writeback failed for ${scraperKey}`, {
+      data: { error: msg },
+    });
+  }
+
   const sheetName = SCRAPER_OUTPUT_SHEETS[scraperKey]!;
   return {
     rows: rowsToEvidence(sheetName, scrapeResult.payloads),
     apifyRuns: apifyRunRefs(scraperKey, scrapeResult.apifyRunIds),
+    follower_writeback,
   };
 }
 
@@ -741,6 +758,7 @@ async function executeInputsScraperRunCore(
   const rowsByScraper: Record<string, number> = {};
   const scrapersRun: string[] = [];
   const apifyRuns: ScraperApifyRunRef[] = [];
+  const followerWritebackByScraper: Record<string, unknown> = {};
 
   for (const key of keys) {
     checkScraperAbort(abortContext);
@@ -753,8 +771,9 @@ async function executeInputsScraperRunCore(
       apifyRuns.push(...result.apifyRuns);
       rowsByScraper[key] = result.rows.length;
       scrapersRun.push(key);
+      if (result.follower_writeback) followerWritebackByScraper[key] = result.follower_writeback;
       logPipelineEvent("info", "other", `inputs scraper ${key} completed`, {
-        data: { row_count: result.rows.length },
+        data: { row_count: result.rows.length, follower_writeback: result.follower_writeback ?? undefined },
       });
     } catch (e) {
       if (isAbortError(e)) throw e;
@@ -822,6 +841,7 @@ async function executeInputsScraperRunCore(
       rows_by_scraper: rowsByScraper,
       apify_runs: apifyRuns,
       max_sources: maxSources,
+      follower_writeback: followerWritebackByScraper,
     },
   });
 

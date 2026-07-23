@@ -372,12 +372,224 @@ export function resolveHeygenProductReferenceAssets(
   return out;
 }
 
-/** Product UI refs for Flux multi-reference image generation. */
+function normalizeMentionHaystack(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function mentionMatchesLabel(haystack: string, label: string | null | undefined): boolean {
+  const needle = normalizeMentionHaystack(String(label ?? ""));
+  if (needle.length < 3) return false;
+  if (haystack.includes(needle)) return true;
+  const tokens = needle.split(" ").filter((t) => t.length >= 3);
+  if (tokens.length === 0) return false;
+  return tokens.every((t) => haystack.includes(t));
+}
+
+export type ProductBibleMentionMatch = {
+  feature_keys: string[];
+  product_keys: string[];
+  matched_labels: string[];
+};
+
+/**
+ * Scan free text (idea / script / visual direction) for Product Bible product + feature labels/keys.
+ */
+export function matchProductBibleMentions(
+  text: string | null | undefined,
+  snapshot: ProductBibleSnapshotV1 | null | undefined
+): ProductBibleMentionMatch {
+  const empty: ProductBibleMentionMatch = { feature_keys: [], product_keys: [], matched_labels: [] };
+  if (!snapshot || snapshot.products.length === 0) return empty;
+  const haystack = normalizeMentionHaystack(String(text ?? ""));
+  if (!haystack) return empty;
+
+  const featureKeys = new Set<string>();
+  const productKeys = new Set<string>();
+  const labels: string[] = [];
+
+  for (const product of snapshot.products) {
+    const productHit =
+      mentionMatchesLabel(haystack, product.key) ||
+      mentionMatchesLabel(haystack, product.label) ||
+      mentionMatchesLabel(haystack, product.one_liner);
+    if (productHit) {
+      productKeys.add(product.key);
+      if (product.label) labels.push(product.label);
+    }
+    for (const feature of product.features) {
+      const featureHit =
+        mentionMatchesLabel(haystack, feature.key) ||
+        mentionMatchesLabel(haystack, feature.label) ||
+        mentionMatchesLabel(haystack, feature.description);
+      if (featureHit) {
+        featureKeys.add(feature.key);
+        productKeys.add(product.key);
+        if (feature.label) labels.push(feature.label);
+      }
+    }
+  }
+
+  return {
+    feature_keys: [...featureKeys],
+    product_keys: [...productKeys],
+    matched_labels: labels.slice(0, 24),
+  };
+}
+
+export type ProductEvidenceSelectionMode = "feature_match" | "product_module" | "full_fallback";
+
+export type ProductEvidenceSelection = {
+  selection_mode: ProductEvidenceSelectionMode;
+  matched_feature_keys: string[];
+  matched_product_keys: string[];
+  matched_labels: string[];
+  assets: ProductBibleResolvedAsset[];
+};
+
+function uniqueKeys(raw: Array<string | null | undefined>): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    const key = slugKey(item);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(key);
+  }
+  return out;
+}
+
+function orderAssetsLikeHeygen(
+  assets: ProductBibleResolvedAsset[],
+  max: number
+): ProductBibleResolvedAsset[] {
+  const eligible = assets.filter((a) => hasResolvableUrl(a));
+  const workflow = eligible.filter((a) => a.role === "workflow_step").sort(compareByStepOrder);
+  const heroes = eligible.filter((a) => a.role === "hero_shot");
+  const screenshots = eligible.filter(
+    (a) => a.role === "screenshot" || a.role === "ui_screen" || a.role === "feature_demo"
+  );
+  const comparisons = eligible.filter((a) => a.role === "comparison");
+  const out: ProductBibleResolvedAsset[] = [];
+  const seen = new Set<string>();
+  for (const asset of [...workflow, ...heroes, ...screenshots, ...comparisons]) {
+    const id = String(asset.asset_id ?? "").trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(asset);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+/**
+ * Prefer screenshots for mentioned features/products; fall back to the full ordered evidence set.
+ *
+ * Ladder:
+ * 1. Assets tagged to matched feature_keys
+ * 2. Module-level / all assets for matched product_keys
+ * 3. Full HeyGen-ordered evidence list (legacy behavior)
+ */
+export function selectProductBibleReferenceAssets(
+  snapshot: ProductBibleSnapshotV1 | null | undefined,
+  opts?: {
+    featureKeys?: Array<string | null | undefined> | null;
+    productKeys?: Array<string | null | undefined> | null;
+    mentionText?: string | null;
+    max?: number;
+  }
+): ProductEvidenceSelection {
+  const max = Math.max(1, Math.min(PRODUCT_BIBLE_HEYGEN_REF_MAX, Math.trunc(opts?.max ?? PRODUCT_BIBLE_HEYGEN_REF_MAX)));
+  const empty: ProductEvidenceSelection = {
+    selection_mode: "full_fallback",
+    matched_feature_keys: [],
+    matched_product_keys: [],
+    matched_labels: [],
+    assets: [],
+  };
+  if (!snapshot) return empty;
+
+  const mentions = matchProductBibleMentions(opts?.mentionText, snapshot);
+  const featureKeys = uniqueKeys([...(opts?.featureKeys ?? []), ...mentions.feature_keys]);
+  const productKeys = uniqueKeys([...(opts?.productKeys ?? []), ...mentions.product_keys]);
+  const full = resolveHeygenProductReferenceAssets(snapshot);
+  const labels = mentions.matched_labels;
+
+  if (featureKeys.length > 0) {
+    const featureSet = new Set(featureKeys);
+    const featureAssets = orderAssetsLikeHeygen(
+      full.filter((a) => a.feature_key != null && featureSet.has(a.feature_key)),
+      max
+    );
+    if (featureAssets.length > 0) {
+      return {
+        selection_mode: "feature_match",
+        matched_feature_keys: featureKeys,
+        matched_product_keys: productKeys,
+        matched_labels: labels,
+        assets: featureAssets,
+      };
+    }
+  }
+
+  if (productKeys.length > 0) {
+    const productSet = new Set(productKeys);
+    const productAssets = orderAssetsLikeHeygen(
+      full.filter((a) => a.product_key != null && productSet.has(a.product_key)),
+      max
+    );
+    if (productAssets.length > 0) {
+      return {
+        selection_mode: "product_module",
+        matched_feature_keys: featureKeys,
+        matched_product_keys: productKeys,
+        matched_labels: labels,
+        assets: productAssets,
+      };
+    }
+  }
+
+  return {
+    selection_mode: "full_fallback",
+    matched_feature_keys: featureKeys,
+    matched_product_keys: productKeys,
+    matched_labels: labels,
+    assets: full.slice(0, max),
+  };
+}
+
+/** Public image URLs from a product evidence selection (Flux / multi-ref). */
+export function publicUrlsFromProductEvidenceSelection(
+  selection: ProductEvidenceSelection | null | undefined,
+  max = 8
+): string[] {
+  if (!selection) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const asset of selection.assets) {
+    const url = asset.public_url?.trim();
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    out.push(url);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+/** Product UI refs for Flux multi-reference image generation (mention-aware). */
 export function resolveFluxProductReferenceAssets(
   snapshot: ProductBibleSnapshotV1 | null | undefined,
-  max = 8
+  opts?: {
+    featureKeys?: Array<string | null | undefined> | null;
+    productKeys?: Array<string | null | undefined> | null;
+    mentionText?: string | null;
+    max?: number;
+  }
 ): ProductBibleResolvedAsset[] {
-  return resolveHeygenProductReferenceAssets(snapshot).slice(0, max);
+  return selectProductBibleReferenceAssets(snapshot, { ...opts, max: opts?.max ?? 8 }).assets;
 }
 
 function roleLabelForProductPrompt(role: ProductBibleAssetRole): string {
@@ -421,10 +633,12 @@ export function formatProductHeygenPromptAssetLine(
 
 /** Compact module list for LLM creation pack (no URLs). */
 export function slimProductBibleForCreationPack(
-  snapshot: ProductBibleSnapshotV1 | null | undefined
+  snapshot: ProductBibleSnapshotV1 | null | undefined,
+  opts?: { selection?: ProductEvidenceSelection | null }
 ): Record<string, unknown> | null {
   if (!snapshot || snapshot.products.length === 0) return null;
-  const orderedRefs = resolveHeygenProductReferenceAssets(snapshot);
+  const selection = opts?.selection ?? selectProductBibleReferenceAssets(snapshot);
+  const orderedRefs = selection.assets.length > 0 ? selection.assets : resolveHeygenProductReferenceAssets(snapshot);
   return {
     schema_version: PRODUCT_BIBLE_SCHEMA,
     application_guide: snapshot.application_guide,
@@ -441,10 +655,17 @@ export function slimProductBibleForCreationPack(
       })),
       asset_count: p.asset_refs.length,
     })),
+    evidence_selection: {
+      mode: selection.selection_mode,
+      matched_feature_keys: selection.matched_feature_keys,
+      matched_product_keys: selection.matched_product_keys,
+      matched_labels: selection.matched_labels,
+    },
     /**
      * Ordered evidence refs — `file_index` is 1-based within the product evidence set.
-     * At HeyGen render, indices are offset to match the full `files[]` array when BVS
-     * brand files were already attached.
+     * Prefer feature-matched screenshots when the idea/script mentions them; otherwise
+     * the full ordered set. At HeyGen render, indices are offset to match the full
+     * `files[]` array when BVS brand files were already attached.
      */
     product_evidence_files: orderedRefs.map((a, i) => ({
       file_index: i + 1,

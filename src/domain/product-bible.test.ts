@@ -6,6 +6,7 @@ import {
   filterProductBibleSnapshotByKey,
   parseProductBible,
   resolveHeygenProductReferenceAssets,
+  selectProductBibleReferenceAssets,
   slimProductBibleForCreationPack,
 } from "./product-bible.js";
 import type { ProjectBrandAssetRow } from "../repositories/project-config.js";
@@ -227,6 +228,7 @@ describe("slimProductBibleForCreationPack", () => {
       asset("s2", "https://s2"),
     ]);
     const slim = slimProductBibleForCreationPack(snapshot);
+    expect(slim?.evidence_selection?.mode).toBe("full_fallback");
     expect(slim?.product_evidence_files).toEqual([
       {
         file_index: 1,
@@ -249,5 +251,166 @@ describe("slimProductBibleForCreationPack", () => {
         scope_label: "workflow step",
       },
     ]);
+  });
+
+  it("slims to feature-matched evidence when selection is provided", () => {
+    const draft = emptyProductBibleDraft();
+    draft.products = [
+      {
+        key: "meal_plan",
+        label: "Meal Plan",
+        description: null,
+        one_liner: null,
+        features: [
+          {
+            key: "recipes",
+            label: "Recipes",
+            description: null,
+            asset_refs: [
+              {
+                asset_id: "a1",
+                role: "feature_demo",
+                label: "Recipe screen",
+                usage_notes: null,
+                step_order: null,
+              },
+            ],
+          },
+        ],
+        asset_refs: [
+          {
+            asset_id: "hero",
+            role: "hero_shot",
+            label: "Hero",
+            usage_notes: null,
+            step_order: null,
+          },
+        ],
+      },
+    ];
+    const snapshot = buildProductBibleSnapshot(draft, [
+      asset("a1", "https://a1"),
+      asset("hero", "https://hero"),
+    ]);
+    const selection = selectProductBibleReferenceAssets(snapshot, {
+      mentionText: "Show the Recipes feature in detail",
+    });
+    const slim = slimProductBibleForCreationPack(snapshot, { selection });
+    expect(slim?.evidence_selection?.mode).toBe("feature_match");
+    expect(slim?.product_evidence_files).toHaveLength(1);
+    expect(slim?.product_evidence_files?.[0]?.feature_key).toBe("recipes");
+  });
+});
+
+describe("selectProductBibleReferenceAssets", () => {
+  function mealPlanSnapshot() {
+    const draft = emptyProductBibleDraft();
+    draft.products = [
+      {
+        key: "meal_plan",
+        label: "Meal Plan",
+        description: null,
+        one_liner: "Plan meals fast",
+        features: [
+          {
+            key: "recipes",
+            label: "Recipes",
+            description: "Browse recipes",
+            asset_refs: [
+              {
+                asset_id: "feat",
+                role: "feature_demo",
+                label: "Recipe detail",
+                usage_notes: null,
+                step_order: null,
+              },
+            ],
+          },
+          {
+            key: "grocery",
+            label: "Grocery List",
+            description: null,
+            asset_refs: [
+              {
+                asset_id: "groc",
+                role: "ui_screen",
+                label: "Grocery UI",
+                usage_notes: null,
+                step_order: null,
+              },
+            ],
+          },
+        ],
+        asset_refs: [
+          {
+            asset_id: "hero",
+            role: "hero_shot",
+            label: "App hero",
+            usage_notes: null,
+            step_order: null,
+          },
+        ],
+      },
+      {
+        key: "other",
+        label: "Other Module",
+        description: null,
+        one_liner: null,
+        features: [],
+        asset_refs: [
+          {
+            asset_id: "other1",
+            role: "screenshot",
+            label: "Other",
+            usage_notes: null,
+            step_order: null,
+          },
+        ],
+      },
+    ];
+    return buildProductBibleSnapshot(draft, [
+      asset("feat", "https://feat"),
+      asset("groc", "https://groc"),
+      asset("hero", "https://hero"),
+      asset("other1", "https://other"),
+    ]);
+  }
+
+  it("prefers feature-matched screenshots when the script mentions a feature", () => {
+    const snapshot = mealPlanSnapshot();
+    const selection = selectProductBibleReferenceAssets(snapshot, {
+      mentionText: "Today we walk through Recipes and how to save a meal.",
+    });
+    expect(selection.selection_mode).toBe("feature_match");
+    expect(selection.assets.map((a) => a.asset_id)).toEqual(["feat"]);
+    expect(selection.matched_feature_keys).toContain("recipes");
+  });
+
+  it("falls back to product module assets when only the product is mentioned", () => {
+    const snapshot = mealPlanSnapshot();
+    const selection = selectProductBibleReferenceAssets(snapshot, {
+      mentionText: "Introducing Meal Plan for busy parents.",
+    });
+    expect(selection.selection_mode).toBe("product_module");
+    expect(selection.assets.map((a) => a.asset_id)).toEqual(["hero", "feat", "groc"]);
+  });
+
+  it("falls back to full ordered evidence when nothing matches", () => {
+    const snapshot = mealPlanSnapshot();
+    const selection = selectProductBibleReferenceAssets(snapshot, {
+      mentionText: "Completely unrelated topic about hiking boots.",
+    });
+    expect(selection.selection_mode).toBe("full_fallback");
+    expect(selection.assets.map((a) => a.asset_id)).toEqual(["hero", "feat", "groc", "other1"]);
+  });
+
+  it("honors explicit featureKeys and unions with mention matches", () => {
+    const snapshot = mealPlanSnapshot();
+    const selection = selectProductBibleReferenceAssets(snapshot, {
+      featureKeys: ["grocery"],
+      mentionText: "Recipes are amazing",
+    });
+    expect(selection.selection_mode).toBe("feature_match");
+    expect(selection.assets.map((a) => a.asset_id).sort()).toEqual(["feat", "groc"]);
   });
 });

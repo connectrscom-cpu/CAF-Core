@@ -43,6 +43,9 @@ export type RunCandidatesMimicPick = {
   mimic_kind: MimicPickKind;
   /** Operator HeyGen lane override for video top performers (content cart). */
   video_intent?: VideoPipelineIntent;
+  /** Optional cart-assigned HeyGen presenter (avatar + paired voice). */
+  heygen_avatar_id?: string;
+  heygen_voice_id?: string;
 };
 
 /** Per-row BVS toggle from marketer content cart (idea_id or mimic key). */
@@ -59,6 +62,8 @@ export type RunCandidatesIdeaPick = {
   use_brand_visual_system?: boolean;
   linkedin_aspect_ratio?: string;
   linkedin_image_count?: number;
+  heygen_avatar_id?: string;
+  heygen_voice_id?: string;
 };
 
 /** One cart line from Review — source of truth for marketer content cart materialize. */
@@ -75,6 +80,8 @@ export type CartManifestItem = {
   insights_id?: string;
   mimic_kind?: MimicPickKind;
   video_intent?: VideoPipelineIntent;
+  heygen_avatar_id?: string;
+  heygen_voice_id?: string;
 };
 
 const cartManifestItemSchema = z.object({
@@ -90,6 +97,8 @@ const cartManifestItemSchema = z.object({
   insights_id: z.string().optional(),
   mimic_kind: z.enum(["image", "carousel", "why_carousel", "video"]).optional(),
   video_intent: videoPipelineIntentSchema.optional(),
+  heygen_avatar_id: z.string().min(1).max(120).optional(),
+  heygen_voice_id: z.string().min(1).max(120).optional(),
 });
 
 /** POST /v1/runs/.../jobs and /candidates body validation. */
@@ -106,6 +115,8 @@ export const runCandidatesMaterializeBodySchema = z.union([
             target_flow_type: z.string().min(1),
             platform: z.string().optional(),
             use_brand_visual_system: z.boolean().optional(),
+            heygen_avatar_id: z.string().min(1).max(120).optional(),
+            heygen_voice_id: z.string().min(1).max(120).optional(),
           })
         )
         .optional(),
@@ -115,6 +126,8 @@ export const runCandidatesMaterializeBodySchema = z.union([
             insights_id: z.string().min(1),
             mimic_kind: z.enum(["image", "carousel", "why_carousel", "video"]),
             video_intent: videoPipelineIntentSchema.optional(),
+            heygen_avatar_id: z.string().min(1).max(120).optional(),
+            heygen_voice_id: z.string().min(1).max(120).optional(),
           })
         )
         .optional(),
@@ -524,6 +537,14 @@ export function plannerRowsFromMimicPicks(
       manual_mimic_pick: true,
       mimic_kind: mimicKind,
       provenance: "signal_pack.visual_guidelines_pack_v1",
+      ...(String(pick.heygen_avatar_id ?? "").trim()
+        ? {
+            heygen_avatar_id: String(pick.heygen_avatar_id).trim(),
+            ...(String(pick.heygen_voice_id ?? "").trim()
+              ? { heygen_voice_id: String(pick.heygen_voice_id).trim() }
+              : {}),
+          }
+        : {}),
     });
   }
 
@@ -567,6 +588,21 @@ export function plannerIdeaKeyVariants(raw: string): string[] {
   return [...keys];
 }
 
+function stampHeygenPresenterOnPlannerRow(
+  row: Record<string, unknown>,
+  avatarId: string | undefined,
+  voiceId: string | undefined
+): Record<string, unknown> {
+  const avatar = String(avatarId ?? "").trim();
+  if (!avatar) return row;
+  const voice = String(voiceId ?? "").trim();
+  return {
+    ...row,
+    heygen_avatar_id: avatar,
+    ...(voice ? { heygen_voice_id: voice } : {}),
+  };
+}
+
 function stampIdeaPickOnPlannerRow(
   row: Record<string, unknown>,
   pick: RunCandidatesIdeaPick
@@ -591,7 +627,7 @@ function stampIdeaPickOnPlannerRow(
   if (pick.linkedin_image_count != null) {
     out.linkedin_image_count = pick.linkedin_image_count;
   }
-  return out;
+  return stampHeygenPresenterOnPlannerRow(out, pick.heygen_avatar_id, pick.heygen_voice_id);
 }
 
 export function normalizeCartIdeaIdFromItemId(raw: string): string {
@@ -667,6 +703,8 @@ function plannerRowFromManifestMimicItem(
           insights_id: insightsId,
           mimic_kind: mimicKind,
           ...(item.video_intent ? { video_intent: item.video_intent } : {}),
+          ...(item.heygen_avatar_id ? { heygen_avatar_id: item.heygen_avatar_id } : {}),
+          ...(item.heygen_voice_id ? { heygen_voice_id: item.heygen_voice_id } : {}),
         },
       ],
       runIdHint
@@ -711,6 +749,8 @@ export function plannerRowsFromCartManifest(
           use_brand_visual_system: item.use_brand_visual_system,
           linkedin_aspect_ratio: item.linkedin_aspect_ratio,
           linkedin_image_count: item.linkedin_image_count,
+          heygen_avatar_id: item.heygen_avatar_id,
+          heygen_voice_id: item.heygen_voice_id,
         })
       );
       continue;

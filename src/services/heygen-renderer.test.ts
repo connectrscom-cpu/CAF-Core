@@ -7,6 +7,7 @@ import {
 } from "../domain/canonical-flow-types.js";
 import {
   applyHeygenEnvAvatarDefaults,
+  applyHeygenAvatarFromSheetConfig,
   buildHeyGenRequestBody,
   buildHeyGenVideoAgentRequestBody,
   firstHeyGenVideoInputUsesSilenceVoice,
@@ -19,6 +20,7 @@ import {
   mergeHeygenConfig,
   mergeHeygenConfigForJob,
   normalizeHeyGenLifecycleToken,
+  pickAssignedHeygenPresenterFromPayload,
   pickHeyGenDownloadUrlFromStatus,
   resolveHeygenAgentDurationSec,
   resolveHeygenGeneratePath,
@@ -843,5 +845,52 @@ describe("roundRobinIndexFromSeed / stablePickIndex", () => {
       expect(idx).toBeGreaterThanOrEqual(0);
       expect(idx).toBeLessThan(len);
     }
+  });
+});
+
+describe("forcePresenter / pickAssignedHeygenPresenterFromPayload", () => {
+  it("reads heygen_avatar_id + voice from candidate_data", () => {
+    expect(
+      pickAssignedHeygenPresenterFromPayload({
+        candidate_data: { heygen_avatar_id: "av_x", heygen_voice_id: "vo_x" },
+      })
+    ).toEqual({ avatar_id: "av_x", voice_id: "vo_x" });
+  });
+
+  it("forcePresenter beats pool lottery and pairs voice", () => {
+    const body: Record<string, unknown> = {
+      avatar_pool_json: JSON.stringify([
+        { avatar_id: "pool_a", voice_id: "pool_va" },
+        { avatar_id: "pool_b", voice_id: "pool_vb" },
+      ]),
+    };
+    applyHeygenAvatarFromSheetConfig(body, {
+      flowType: "FLOW_VID_SCRIPT",
+      pickSeed: "RUN__row0001__v1",
+      forcePresenter: { avatar_id: "forced_av", voice_id: "forced_vo" },
+    });
+    const ch = body.character as Record<string, unknown>;
+    expect(ch.avatar_id).toBe("forced_av");
+    expect(body.voice_id).toBe("forced_vo");
+  });
+
+  it("buildHeyGenRequestBody applies forcePresenter into video_inputs character", () => {
+    const body = buildHeyGenRequestBody(
+      {
+        avatar_pool_json: JSON.stringify([{ avatar_id: "pool_a", voice_id: "pool_va" }]),
+      },
+      { spoken_script: "Hello from the host." },
+      undefined,
+      {
+        flowType: "FLOW_VID_SCRIPT",
+        taskId: "RUN__row0001__v1",
+        forcePresenter: { avatar_id: "cart_av", voice_id: "cart_vo" },
+      }
+    );
+    const vi = body.video_inputs as Array<Record<string, unknown>>;
+    const ch = vi[0]?.character as Record<string, unknown>;
+    expect(ch.avatar_id).toBe("cart_av");
+    const voice = vi[0]?.voice as Record<string, unknown>;
+    expect(voice.voice_id).toBe("cart_vo");
   });
 });

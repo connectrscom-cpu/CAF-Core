@@ -26,6 +26,7 @@ import {
   buildHeyGenRequestBody,
   buildHeyGenVideoAgentRequestBody,
   mergeHeygenConfigForJob,
+  pickAssignedHeygenPresenterFromPayload,
   resolveHeygenGeneratePath,
   resolveHeygenRenderMode,
   runHeygenVideoWithBody,
@@ -150,6 +151,7 @@ async function resolveHookFirstBodyPresenter(
   applyHeygenAvatarFromSheetConfig(merged, {
     flowType: bodyFlowType,
     pickSeed: job.task_id,
+    forcePresenter: pickAssignedHeygenPresenterFromPayload(job.generation_payload),
   });
 
   const override = job.generation_payload.heygen_request as Record<string, unknown> | undefined;
@@ -445,6 +447,9 @@ async function renderBodyHeyGen(
       flowType: bodyFlowType,
       taskId: job.task_id,
       visualOnlySilenceDurationSec: config.HEYGEN_VISUAL_ONLY_SILENCE_DURATION_SEC,
+      forcePresenter: presenter?.avatar_id
+        ? { avatar_id: presenter.avatar_id, voice_id: presenter.voice_id }
+        : pickAssignedHeygenPresenterFromPayload(job.generation_payload),
     });
     body = mapHeyGenV2StyleBodyToV3CreateVideoAvatar(body);
   } else {
@@ -453,6 +458,9 @@ async function renderBodyHeyGen(
       taskId: job.task_id,
       platform: job.platform,
       agentMode: renderMode === "HEYGEN_NO_AVATAR" ? "no_avatar" : "prompt_avatar",
+      forcePresenter: presenter?.avatar_id
+        ? { avatar_id: presenter.avatar_id, voice_id: presenter.voice_id }
+        : pickAssignedHeygenPresenterFromPayload(job.generation_payload),
       durationBounds: {
         minSec: config.HEYGEN_AGENT_MIN_DURATION_SEC,
         maxSec: 300,

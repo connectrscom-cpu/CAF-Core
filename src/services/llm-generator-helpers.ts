@@ -10,11 +10,16 @@ import { getSignalPackById, type SignalPackRow } from "../repositories/signal-pa
 import { isCarouselFlow, isVideoFlow } from "../decision_engine/flow-kind.js";
 import { isProductImageFlow, isProductVideoFlow } from "../domain/product-flow-types.js";
 import {
+  buildProductEvidenceMentionCorpus,
   isProductBibleEnabledForCandidate,
+  pickFeatureKeysFromCandidate,
   pickProductKeyFromCandidate,
   resolveProductBibleSnapshotForProject,
 } from "../domain/product-bible-v1.js";
-import { slimProductBibleForCreationPack } from "../domain/product-bible.js";
+import {
+  selectProductBibleReferenceAssets,
+  slimProductBibleForCreationPack,
+} from "../domain/product-bible.js";
 import {
   isTpGroundedCarouselRenderFlow,
   isTopPerformerMimicRenderableFlow,
@@ -498,10 +503,19 @@ export async function buildCreationPack(
     isProductImageFlow(flowType)
   ) {
     const productKey = pickProductKeyFromCandidate(candidateData);
+    const featureKeys = pickFeatureKeysFromCandidate(candidateData);
     const resolved = await resolveProductBibleSnapshotForProject(db, projectId, productKey).catch(() => null);
-    const slim = resolved ? slimProductBibleForCreationPack(resolved.snapshot) : null;
-    if (slim) {
-      pack.product_bible = slim;
+    if (resolved) {
+      const mentionText = buildProductEvidenceMentionCorpus({ candidateData });
+      const selection = selectProductBibleReferenceAssets(resolved.snapshot, {
+        featureKeys,
+        productKeys: [productKey],
+        mentionText,
+      });
+      const slim = slimProductBibleForCreationPack(resolved.snapshot, { selection });
+      if (slim) {
+        pack.product_bible = slim;
+      }
     }
   }
 

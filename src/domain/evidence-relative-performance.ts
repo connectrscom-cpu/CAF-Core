@@ -151,6 +151,47 @@ function handleFromTiktokLink(link: string): string | null {
   return m?.[1] ? normalizeSocialHandle(m[1]) : null;
 }
 
+function handleFromFacebookLink(link: string): string | null {
+  const m = link.match(/facebook\.com\/([^/?#]+)/i);
+  if (!m?.[1]) return null;
+  const seg = decodeURIComponent(m[1]).toLowerCase();
+  if (
+    ["pages", "groups", "watch", "events", "photo", "video", "permalink.php", "profile.php", "share", "story.php"].includes(
+      seg
+    )
+  ) {
+    return null;
+  }
+  return normalizeSocialHandle(seg);
+}
+
+function handleFromLinkedInLink(link: string): string | null {
+  const m = link.match(/linkedin\.com\/(?:in|company)\/([^/?#]+)/i);
+  return m?.[1] ? normalizeSocialHandle(decodeURIComponent(m[1])) : null;
+}
+
+/** Handles / path keys that can join a source-registry row to scraped posts. */
+export function handlesFromSourceRegistryRow(row: Record<string, unknown>): string[] {
+  const out = new Set<string>();
+  const link = String(row.Link ?? row.link ?? row.URL ?? row.url ?? row["Facebook URL"] ?? "").trim();
+  if (link) {
+    for (const h of [
+      handleFromInstagramLink(link),
+      handleFromTiktokLink(link),
+      handleFromFacebookLink(link),
+      handleFromLinkedInLink(link),
+    ]) {
+      if (h) out.add(h);
+    }
+  }
+  const name = String(row.Name ?? row.name ?? "").trim();
+  if (name) {
+    const h = normalizeSocialHandle(name);
+    if (h && !h.includes(" ") && h.length <= 64) out.add(h);
+  }
+  return [...out];
+}
+
 /** Account handle on a social post row (for registry join). */
 export function extractSocialAccountHandle(
   evidenceKind: string,
@@ -184,9 +225,16 @@ export function extractSocialAccountHandle(
       if (fromUrl) return fromUrl;
     }
   } else if (evidenceKind === "facebook_post") {
+    for (const k of ["inputUrl", "pageUrl", "page_url", "url", "URL"]) {
+      const fromUrl = handleFromFacebookLink(String(payload[k] ?? ""));
+      if (fromUrl) return fromUrl;
+    }
     for (const k of ["page_name", "pageName", "page_id", "pageId"]) {
       const v = payload[k];
-      if (v != null && String(v).trim()) return normalizeSocialHandle(String(v));
+      if (v != null && String(v).trim()) {
+        const h = normalizeSocialHandle(String(v));
+        if (h && !h.includes(" ")) return h;
+      }
     }
   } else if (evidenceKind === "linkedin_post") {
     for (const layer of collectPayloadLayers(payload)) {
@@ -194,11 +242,17 @@ export function extractSocialAccountHandle(
         const v = layer[k];
         if (v != null && String(v).trim()) return normalizeSocialHandle(String(v));
       }
+      for (const k of ["author_url", "authorUrl", "linkedin_url", "url"]) {
+        const fromUrl = handleFromLinkedInLink(String(layer[k] ?? ""));
+        if (fromUrl) return fromUrl;
+      }
       const author = layer.author;
       if (author && typeof author === "object" && !Array.isArray(author)) {
         const a = author as Record<string, unknown>;
         const id = a.publicIdentifier ?? a.public_identifier;
         if (id != null && String(id).trim()) return normalizeSocialHandle(String(id));
+        const fromUrl = handleFromLinkedInLink(String(a.linkedinUrl ?? a.linkedin_url ?? ""));
+        if (fromUrl) return fromUrl;
       }
     }
   }
@@ -216,22 +270,23 @@ export function buildRegistryFollowerLookup(registryRows: Record<string, unknown
       row.Followers ?? row.followers ?? row.Fan_Count ?? row.fan_count ?? row.fans
     );
     if (!followers) continue;
-
-    const link = String(row.Link ?? row.link ?? row.URL ?? row.url ?? row["Facebook URL"] ?? "").trim();
-    if (link) {
-      const ig = handleFromInstagramLink(link);
-      if (ig) map.set(ig, followers);
-      const tt = handleFromTiktokLink(link);
-      if (tt) map.set(tt, followers);
-    }
-
-    const name = String(row.Name ?? row.name ?? "").trim();
-    if (name) {
-      const h = normalizeSocialHandle(name);
-      if (h && !h.includes(" ") && h.length <= 64) map.set(h, followers);
+    for (const h of handlesFromSourceRegistryRow(row)) {
+      map.set(h, followers);
     }
   }
   return map;
+}
+
+/** Merge follower maps: `overlay` wins on key conflicts (e.g. import registry over project sources). */
+export function mergeFollowerLookups(
+  base: ReadonlyMap<string, number>,
+  overlay: ReadonlyMap<string, number>
+): Map<string, number> {
+  const out = new Map(base);
+  for (const [k, v] of overlay) {
+    if (v > 0) out.set(k, v);
+  }
+  return out;
 }
 
 /**

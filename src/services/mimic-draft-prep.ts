@@ -20,6 +20,7 @@ import { parseBvsFromPayload, brandProfileFromBvsSnapshot, resolveBvsForEnabledJ
 import { enrichMimicWithBvsRenderPlan, bvsTemplateBgUsesInventedPlates } from "../domain/bvs-render-plan.js";
 import { isVisualFirstCarouselFlow } from "../domain/visual-first-carousel-flow-types.js";
 import { isNewVisualCarouselExecution, buildNewVisualSlidePlans } from "../domain/new-visual-carousel-execution.js";
+import { attachProductEvidenceUrlsToMimicPayload } from "../domain/product-bible-v1.js";
 import { ensureNewVisualCarouselBeforeCopyGeneration } from "./new-visual-carousel-prep.js";
 import { getActiveBrandProfile } from "../repositories/brand-profiles.js";
 import { buildContentSlideCopyLayoutFromEntry, buildSlideCopyLayoutForLlmFromPayload } from "../domain/mimic-job-grounding.js";
@@ -719,6 +720,13 @@ export async function prepareMimicDraftPackage(
       const canGenerateFlux =
         layout.length > 0 || whyFlux || newVisualFlux || bvsTemplateFlux;
       if (canGenerateFlux) {
+        // Re-select product screenshots now that copy/script text is available.
+        mimic = attachProductEvidenceUrlsToMimicPayload(merged, mimic, {
+          candidateData: asRecord(merged.candidate_data),
+        });
+        merged = mergeMimicPayloadSlice(merged, mimic);
+        await persistGenerationPayload(db, job.id, merged);
+
         const fluxOpts = { imageInputMode, useLlm: config.MIMIC_FLUX_PROMPT_LLM } as const;
         const { bySlide, meta } = whyFlux
           ? await generateWhyMimicFluxImagePromptsForJob(

@@ -3,6 +3,8 @@ import {
   flowTypeForVideoIntent,
   isVideoTopPerformerItem,
   resolveRecommendedVideoIntent,
+  videoLaneNeedsAvatar,
+  videoLaneUsesUgcPresenters,
 } from "./video-lane";
 
 describe("resolveRecommendedVideoIntent", () => {
@@ -32,5 +34,23 @@ describe("flowTypeForVideoIntent", () => {
 
   it("maps hook_first to FLOW_VID_HOOK_FIRST", () => {
     expect(flowTypeForVideoIntent("hook_first")).toBe("FLOW_VID_HOOK_FIRST");
+  });
+});
+
+describe("videoLaneNeedsAvatar", () => {
+  it("is true for avatar lanes and false for no_avatar", () => {
+    expect(videoLaneNeedsAvatar("script_avatar")).toBe(true);
+    expect(videoLaneNeedsAvatar("ugc")).toBe(true);
+    expect(videoLaneNeedsAvatar("no_avatar")).toBe(false);
+    expect(videoLaneNeedsAvatar("FLOW_VID_PROMPT_NO_AVATAR")).toBe(false);
+    expect(videoLaneNeedsAvatar("FLOW_VID_SCRIPT")).toBe(true);
+  });
+});
+
+describe("videoLaneUsesUgcPresenters", () => {
+  it("flags ugc lanes", () => {
+    expect(videoLaneUsesUgcPresenters("ugc")).toBe(true);
+    expect(videoLaneUsesUgcPresenters("FLOW_VID_UGC")).toBe(true);
+    expect(videoLaneUsesUgcPresenters("script_avatar")).toBe(false);
   });
 });

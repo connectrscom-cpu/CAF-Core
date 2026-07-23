@@ -116,12 +116,14 @@ export interface CartCreationLine {
   generation_strategy?: GenerationStrategy;
   format?: string;
   platform?: string;
-      mimic_mode?: ContentCartItem["mimicMode"];
-      render_mode?: ContentCartItem["renderMode"];
-      video_intent?: ContentCartItem["videoIntent"];
-      linkedin_aspect_ratio?: ContentCartItem["linkedinAspectRatio"];
-      linkedin_image_count?: ContentCartItem["linkedinImageCount"];
-      use_brand_visual_system?: boolean;
+  mimic_mode?: ContentCartItem["mimicMode"];
+  render_mode?: ContentCartItem["renderMode"];
+  video_intent?: ContentCartItem["videoIntent"];
+  heygen_avatar_id?: string;
+  heygen_voice_id?: string;
+  linkedin_aspect_ratio?: ContentCartItem["linkedinAspectRatio"];
+  linkedin_image_count?: ContentCartItem["linkedinImageCount"];
+  use_brand_visual_system?: boolean;
 }
 
 /** True when the cart item's resolved flow is allowed by project content routes. */
@@ -158,6 +160,8 @@ export function buildCartCreationPayload(slug: string, items: ContentCartItem[])
       mimic_mode: item.mimicMode,
       render_mode: item.renderMode,
       video_intent: item.videoIntent,
+      heygen_avatar_id: item.heygenAvatarId,
+      heygen_voice_id: item.heygenVoiceId,
       linkedin_aspect_ratio: item.linkedinAspectRatio,
       linkedin_image_count: item.linkedinImageCount,
       use_brand_visual_system: item.useBrandVisualSystem !== false,

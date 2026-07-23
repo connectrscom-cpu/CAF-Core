@@ -54,6 +54,37 @@ export function labelForVideoIntent(intent: VideoPipelineIntent): string {
   return VIDEO_LANE_OPTIONS.find((o) => o.id === intent)?.label ?? "Video";
 }
 
+/** Lanes that put an on-camera HeyGen presenter in the video. */
+export function videoLaneNeedsAvatar(
+  intent: VideoPipelineIntent | string | null | undefined
+): boolean {
+  const id = String(intent ?? "").trim();
+  if (!id) return false;
+  if (id === "no_avatar") return false;
+  if (id === "script_avatar" || id === "prompt_avatar" || id === "hook_first" || id === "ugc") {
+    return true;
+  }
+  const flow = id.toUpperCase();
+  if (flow.includes("NO_AVATAR") || flow.includes("HEYGEN_NO")) return false;
+  return (
+    flow === "FLOW_VID_SCRIPT" ||
+    flow === "FLOW_VID_PROMPT" ||
+    flow === "FLOW_VID_HOOK_FIRST" ||
+    flow === "FLOW_VID_UGC" ||
+    /FLOW_PRODUCT_/i.test(flow)
+  );
+}
+
+/** Prefer UGC host pool in the cart picker for UGC / product-UGC lanes. */
+export function videoLaneUsesUgcPresenters(
+  intent: VideoPipelineIntent | string | null | undefined
+): boolean {
+  const id = String(intent ?? "").trim();
+  if (id === "ugc") return true;
+  const flow = id.toUpperCase();
+  return flow === "FLOW_VID_UGC" || /UGC/i.test(flow);
+}
+
 /** CAF-recommended lane from Nemotron `format_pattern` (same rules as Core). */
 export function resolveRecommendedVideoIntent(formatPattern: string): VideoPipelineIntent {
   const pattern = String(formatPattern ?? "")

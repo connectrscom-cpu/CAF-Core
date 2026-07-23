@@ -442,6 +442,43 @@ function newVisualBvsReferenceUrls(mimic: MimicPayloadV1): string[] {
   return resolveNewVisualBvsFluxImageReferenceUrls(bvsSnapshotFromMimic(mimic));
 }
 
+function productEvidenceReferenceUrls(mimic: MimicPayloadV1): string[] {
+  const urls = Array.isArray(mimic.product_evidence_reference_urls)
+    ? mimic.product_evidence_reference_urls
+    : [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of urls) {
+    const url = String(raw ?? "").trim();
+    if (!url || !/^https?:\/\//i.test(url) || seen.has(url)) continue;
+    seen.add(url);
+    out.push(url);
+    if (out.length >= 8) break;
+  }
+  return out;
+}
+
+function mergeFluxImageReferenceUrls(mimic: MimicPayloadV1): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const url of [...productEvidenceReferenceUrls(mimic), ...newVisualBvsReferenceUrls(mimic)]) {
+    if (seen.has(url)) continue;
+    seen.add(url);
+    out.push(url);
+    if (out.length >= 8) break;
+  }
+  return out;
+}
+
+const PRODUCT_EVIDENCE_FLUX_NOTE =
+  "Attached product evidence images show real product UI — when the slide is about a product feature or screen, ground the scene in those real screenshots (do not invent fake app UI). Keep plates art-only with zero readable text.";
+
+function enrichFluxPromptWithProductEvidence(mimic: MimicPayloadV1, prompt: string): string {
+  if (productEvidenceReferenceUrls(mimic).length === 0) return prompt;
+  if (/Attached product evidence images/i.test(prompt)) return prompt;
+  return `${prompt.trim()}\n\n${PRODUCT_EVIDENCE_FLUX_NOTE}`;
+}
+
 function fluxPromptAlreadyHasBvs(prompt: string, forNewVisual: boolean): boolean {
   return forNewVisual
     ? /Brand Visual System \(BVS\) — subject-first/i.test(prompt)
@@ -451,15 +488,17 @@ function fluxPromptAlreadyHasBvs(prompt: string, forNewVisual: boolean): boolean
 function enrichFluxPromptWithBvs(mimic: MimicPayloadV1, prompt: string): string {
   const trimmed = prompt.trim();
   const forNewVisual = isNewVisualMimicPayload(mimic);
-  if (fluxPromptAlreadyHasBvs(trimmed, forNewVisual)) return trimmed;
-  return withBvsFluxPrompt(mimic, trimmed);
+  if (fluxPromptAlreadyHasBvs(trimmed, forNewVisual)) {
+    return enrichFluxPromptWithProductEvidence(mimic, trimmed);
+  }
+  return enrichFluxPromptWithProductEvidence(mimic, withBvsFluxPrompt(mimic, trimmed));
 }
 
 function withNewVisualBvsImageRefs(
   mimic: MimicPayloadV1,
   resolution: MimicSlideImagePromptResolution
 ): MimicSlideImagePromptResolution {
-  const bvsReferenceUrls = newVisualBvsReferenceUrls(mimic);
+  const bvsReferenceUrls = mergeFluxImageReferenceUrls(mimic);
   if (bvsReferenceUrls.length === 0) return resolution;
   return { ...resolution, bvsReferenceUrls };
 }

@@ -84,4 +84,22 @@ describe("evidence-relative-performance", () => {
     expect(f.has_follower_baseline).toBe(1);
     expect(f.page_relative_reach).toBeGreaterThan(0.5);
   });
+
+  it("buildRegistryFollowerLookup joins facebook and linkedin profile links", () => {
+    const lookup = buildRegistryFollowerLookup([
+      { Link: "https://www.facebook.com/competitor.page", Followers: "80k" },
+      { Link: "https://www.linkedin.com/in/satyanadella/", Followers: "10M" },
+    ]);
+    expect(lookup.get("competitor.page")).toBe(80_000);
+    expect(lookup.get("satyanadella")).toBe(10_000_000);
+  });
+
+  it("extractSocialAccountHandle prefers facebook inputUrl path", () => {
+    expect(
+      extractSocialAccountHandle("facebook_post", {
+        inputUrl: "https://www.facebook.com/competitor.page",
+        pageName: "Competitor Page",
+      })
+    ).toBe("competitor.page");
+  });
 });

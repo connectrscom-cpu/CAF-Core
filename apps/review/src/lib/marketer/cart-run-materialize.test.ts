@@ -59,6 +59,43 @@ describe("cartBvsOverrides", () => {
     ]);
   });
 
+  it("carries assigned HeyGen presenter onto mimic picks and cart manifest", () => {
+    const body = cartItemsToMaterializeBody([
+      {
+        id: "tp_ins_video",
+        kind: "top_performer",
+        title: "Demo reel",
+        flowDestination: "Script avatar",
+        flowTypeRaw: "FLOW_VID_SCRIPT",
+        format: "product_demo",
+        videoIntent: "script_avatar",
+        heygenAvatarId: "av_host_1",
+        heygenVoiceId: "voice_host_1",
+      },
+      {
+        id: "idea_idea_vid_1",
+        kind: "idea",
+        title: "Talking tip",
+        flowDestination: "Script avatar",
+        flowTypeRaw: "FLOW_VID_SCRIPT",
+        format: "video",
+        heygenAvatarId: "av_brand_2",
+        heygenVoiceId: "voice_brand_2",
+      },
+    ]);
+    expect(body.mimic_picks[0]).toMatchObject({
+      insights_id: "ins_video",
+      heygen_avatar_id: "av_host_1",
+      heygen_voice_id: "voice_host_1",
+    });
+    expect(body.idea_picks[0]).toMatchObject({
+      idea_id: "idea_vid_1",
+      heygen_avatar_id: "av_brand_2",
+      heygen_voice_id: "voice_brand_2",
+    });
+    expect(body.cart_manifest.map((l) => l.heygen_avatar_id)).toEqual(["av_host_1", "av_brand_2"]);
+  });
+
   it("derives video_intent from flowTypeRaw when cart lane is explicit", () => {
     const body = cartItemsToMaterializeBody([
       {

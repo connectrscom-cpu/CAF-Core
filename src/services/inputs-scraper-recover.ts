@@ -43,6 +43,7 @@ import {
   hasApifyToken,
 } from "./apify-client.js";
 import { logPipelineEvent } from "./pipeline-logger.js";
+import { writebackFollowersForScraper } from "./inputs-source-followers.js";
 
 export type RecoverableScraperKey = Exclude<ScraperKey, "all" | "html">;
 
@@ -228,6 +229,17 @@ export async function recoverInputsScraperFromApify(
     );
   }
 
+  let followerWriteback: Record<string, unknown> | null = null;
+  try {
+    const wb = await writebackFollowersForScraper(db, projectId, targetScraperKey, payloads);
+    if (wb) followerWriteback = wb as unknown as Record<string, unknown>;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    logPipelineEvent("warn", "other", `source follower writeback failed on recover for ${targetScraperKey}`, {
+      data: { error: msg },
+    });
+  }
+
   const sheetName = SCRAPER_OUTPUT_SHEETS[targetScraperKey];
   if (!sheetName) throw new Error(`Unsupported scraper key: ${targetScraperKey}`);
 
@@ -281,6 +293,7 @@ export async function recoverInputsScraperFromApify(
       recovered: true,
       recovered_at: new Date().toISOString(),
       recovered_from_apify_run_ids: runIds,
+      follower_writeback: followerWriteback ? { [statsKey]: followerWriteback } : {},
     },
   });
 

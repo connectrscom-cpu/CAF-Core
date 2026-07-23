@@ -710,11 +710,14 @@ async function loadSources(){
     var rows=d.rows||[];
     hint.textContent=rows.length+' row(s) · '+tab;
     if(rows.length===0){root.innerHTML='<div class="empty">No rows — sync from workbook or add a row.</div>';return;}
-    var cols=new Set(['Name','Link','Platform','Enabled']);
+    var cols=new Set(['Name','Link','Platform','Followers','Enabled']);
     rows.forEach(function(x){
       Object.keys(x.payload_json||{}).forEach(function(k){cols.add(k);});
     });
-    var colArr=Array.from(cols).slice(0,8);
+    var preferred=['Name','Link','Platform','Followers','Enabled'];
+    var colArr=preferred.filter(function(c){return cols.has(c);});
+    cols.forEach(function(c){if(colArr.indexOf(c)<0)colArr.push(c);});
+    colArr=colArr.slice(0,10);
     var tb='<div style="overflow:auto"><table class="sp-modal-table caf-table-compact"><thead><tr><th>#</th><th>On</th>';
     colArr.forEach(function(c){tb+='<th>'+esc(c)+'</th>';});
     tb+='</tr></thead><tbody>';

@@ -7,6 +7,7 @@ import {
   augmentPreLlmFeaturesWithRelative,
   buildRegistryFollowerLookup,
   enrichPayloadFollowerBaseline,
+  mergeFollowerLookups,
 } from "../domain/evidence-relative-performance.js";
 import {
   appliesSubjectRelevance,
@@ -25,6 +26,7 @@ import {
 import { listEvidenceRowsForPreLlmScoring } from "../repositories/inputs-evidence.js";
 import type { SelectionSnapshot } from "./inputs-selection.js";
 import { DEFAULT_SELECTION_CAPS } from "./inputs-selection.js";
+import { loadProjectSourceFollowerLookup } from "./inputs-source-followers.js";
 
 /** Stored in `selection_snapshot_json.rule_version` when pre-LLM ranking ran. */
 export const PRE_LLM_RULE_VERSION = "pre_llm_v1";
@@ -587,7 +589,10 @@ export async function rankImportRowsForLlm(
   const minText = cfg.min_primary_text_chars ?? 12;
   const cap = Math.min(20_000, Math.max(maxRowsForLlm * 50, 5000));
   const dbRows = await listEvidenceRowsForPreLlmScoring(db, projectId, importId, cap);
-  const registryFollowerLookup = buildRegistryFollowerLookupFromEvidenceRows(dbRows);
+  const importLookup = buildRegistryFollowerLookupFromEvidenceRows(dbRows);
+  const projectLookup = await loadProjectSourceFollowerLookup(db, projectId);
+  // Start from project sources; overlay import source_registry so workbook rows win.
+  const registryFollowerLookup = mergeFollowerLookups(projectLookup, importLookup);
   const featureOpts: PreLlmFeatureOptions = { registryFollowerLookup };
 
   const ranked: PreLlmRankedRow[] = [];

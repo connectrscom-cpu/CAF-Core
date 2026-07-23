@@ -517,6 +517,17 @@ export function transformFacebookApifyPost(
     likes,
     comments: item.comments ?? null,
     shares: item.shares ?? null,
+    page_followers:
+      item.pageFollowers ??
+      item.page_followers ??
+      item.followers ??
+      item.followersCount ??
+      item.fan_count ??
+      item.fanCount ??
+      item.pageFans ??
+      (item.user as Record<string, unknown> | undefined)?.followers ??
+      (item.user as Record<string, unknown> | undefined)?.followersCount ??
+      null,
     caption: "",
     caption_1: chunks[0] ?? "",
     caption_2: chunks[1] ?? "",

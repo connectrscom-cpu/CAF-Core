@@ -105,6 +105,11 @@ export interface MimicPayloadV1 {
   bvs_bible_snapshot?: Record<string, unknown>;
   /** Frozen BVS overlay + background strategy for template_bg listicles. */
   bvs_render_plan?: BvsRenderPlanV1;
+  /**
+   * Product Bible screenshots selected for this job (feature/product mention match).
+   * Merged into Flux multi-reference image inputs for product-lens carousels.
+   */
+  product_evidence_reference_urls?: string[];
 }
 
 export const MIMIC_PAYLOAD_KEY = "mimic_v1";
@@ -260,6 +265,14 @@ export function pickMimicPayload(payload: unknown): MimicPayloadV1 | null {
       ? { bvs_bible_snapshot: rec.bvs_bible_snapshot as Record<string, unknown> }
       : {}),
     ...(parseBvsRenderPlan(rec.bvs_render_plan) ? { bvs_render_plan: parseBvsRenderPlan(rec.bvs_render_plan)! } : {}),
+    ...(Array.isArray(rec.product_evidence_reference_urls)
+      ? {
+          product_evidence_reference_urls: rec.product_evidence_reference_urls
+            .map((u) => String(u ?? "").trim())
+            .filter((u) => /^https?:\/\//i.test(u))
+            .slice(0, 8),
+        }
+      : {}),
   };
 }
 

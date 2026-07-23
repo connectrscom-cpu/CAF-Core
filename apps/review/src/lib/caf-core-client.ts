@@ -1910,6 +1910,8 @@ export async function materializeRunJobs(
       insights_id?: string;
       mimic_kind?: string;
       video_intent?: string;
+      heygen_avatar_id?: string;
+      heygen_voice_id?: string;
     }>;
     idea_ids?: string[];
     idea_picks?: Array<{
@@ -1917,8 +1919,16 @@ export async function materializeRunJobs(
       target_flow_type: string;
       platform?: string;
       use_brand_visual_system?: boolean;
+      heygen_avatar_id?: string;
+      heygen_voice_id?: string;
     }>;
-    mimic_picks?: Array<{ insights_id: string; mimic_kind: string; video_intent?: string }>;
+    mimic_picks?: Array<{
+      insights_id: string;
+      mimic_kind: string;
+      video_intent?: string;
+      heygen_avatar_id?: string;
+      heygen_voice_id?: string;
+    }>;
     bvs_overrides?: Array<{ key: string; enabled: boolean }>;
   }
 ) {

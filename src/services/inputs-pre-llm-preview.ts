@@ -2,6 +2,7 @@
  * Pre-LLM evidence preview: score + filter by adjustable cutoff (Admin / API).
  */
 import type { Pool } from "pg";
+import { mergeFollowerLookups } from "../domain/evidence-relative-performance.js";
 import { listEvidenceRowsByImportAndKind } from "../repositories/inputs-evidence.js";
 import { extractEvidenceDisplayFields } from "./inputs-evidence-display.js";
 import { deriveEvidenceDisplayKind } from "./inputs-evidence-post-format.js";
@@ -11,6 +12,7 @@ import {
   mergePreLlmConfig,
   resolvePreLlmProfileForRow,
 } from "./inputs-pre-llm-rank.js";
+import { loadProjectSourceFollowerLookup } from "./inputs-source-followers.js";
 
 export interface PreLlmEvidencePreviewRow {
   id: string;
@@ -103,11 +105,13 @@ export async function getPreLlmEvidencePreview(
   const activeWeights = { ...kindProf.weights };
   const subjectCfg = cfg.subject_relevance;
 
-  const [dbRows, registryRows] = await Promise.all([
+  const [dbRows, registryRows, projectLookup] = await Promise.all([
     listEvidenceRowsByImportAndKind(db, projectId, importId, evidenceKind, 15_000),
     listEvidenceRowsByImportAndKind(db, projectId, importId, "source_registry", 5_000),
+    loadProjectSourceFollowerLookup(db, projectId),
   ]);
-  const registryFollowerLookup = buildRegistryFollowerLookupFromEvidenceRows(registryRows);
+  const importLookup = buildRegistryFollowerLookupFromEvidenceRows(registryRows);
+  const registryFollowerLookup = mergeFollowerLookups(projectLookup, importLookup);
   const featureOpts = { registryFollowerLookup };
 
   let sparseTextDropped = 0;
