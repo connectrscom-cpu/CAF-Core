@@ -145,6 +145,14 @@ function clearTpResume(slug: string): void {
 
 type ProgressLine = { at?: string; message: string; stage?: string };
 
+type LastProgressSnap = {
+  progress_id: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  ok?: boolean | null;
+  lines: ProgressLine[];
+};
+
 type TpPassKind = "carousel" | "video" | "broad";
 
 /** Admin-style run log for a research pipeline pass (expandable in Review). */
@@ -170,6 +178,20 @@ type TpPassReport = {
 };
 
 type PassReports = Partial<Record<TpPassKind, TpPassReport>>;
+
+function progressFromSnap(snap: LastProgressSnap | null | undefined): TpPassReport["progress"] {
+  if (!snap) return undefined;
+  return {
+    started_at: snap.started_at,
+    finished_at: snap.finished_at,
+    ok: snap.ok,
+    lines: snap.lines,
+  };
+}
+
+function readLastProgress(ref: { current: LastProgressSnap | null }): LastProgressSnap | null {
+  return ref.current;
+}
 
 function passLabel(kind: TpPassKind): string {
   if (kind === "broad") return "Broad insights";
@@ -364,13 +386,7 @@ export function ResearchPipelinePanel({
   const [evidenceUploading, setEvidenceUploading] = useState(false);
   const resumeAttempted = useRef(false);
   const pollAbortRef = useRef(false);
-  const lastProgressRef = useRef<{
-    progress_id: string;
-    started_at?: string | null;
-    finished_at?: string | null;
-    ok?: boolean | null;
-    lines: ProgressLine[];
-  } | null>(null);
+  const lastProgressRef = useRef<LastProgressSnap | null>(null);
 
   function upsertPassReport(kind: TpPassKind, entry: TpPassReport) {
     setPassReports((prev) => ({ ...prev, [kind]: entry }));
@@ -664,26 +680,20 @@ export function ResearchPipelinePanel({
         pushStatus("Carousel analysis done.");
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
+        const snap = readLastProgress(lastProgressRef);
         upsertPassReport("carousel", {
           at: new Date().toISOString(),
           pass: "top_performer_carousel",
           success: false,
           project_slug: slug,
           import_id: activeImportId,
-          progress_id: lastProgressRef.current?.progress_id ?? null,
+          progress_id: snap?.progress_id ?? null,
           http_status: httpStatus,
           endpoint,
           request_body: requestBody,
           response: responseJson,
           error: msg,
-          progress: lastProgressRef.current
-            ? {
-                started_at: lastProgressRef.current.started_at,
-                finished_at: lastProgressRef.current.finished_at,
-                ok: lastProgressRef.current.ok,
-                lines: lastProgressRef.current.lines,
-              }
-            : undefined,
+          progress: progressFromSnap(snap),
           status_timeline: statusLines.slice(-20),
         });
         throw e;
@@ -743,26 +753,20 @@ export function ResearchPipelinePanel({
         pushStatus("Video analysis done.");
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
+        const snap = readLastProgress(lastProgressRef);
         upsertPassReport("video", {
           at: new Date().toISOString(),
           pass: "top_performer_video",
           success: false,
           project_slug: slug,
           import_id: activeImportId,
-          progress_id: lastProgressRef.current?.progress_id ?? null,
+          progress_id: snap?.progress_id ?? null,
           http_status: httpStatus,
           endpoint,
           request_body: requestBody,
           response: responseJson,
           error: msg,
-          progress: lastProgressRef.current
-            ? {
-                started_at: lastProgressRef.current.started_at,
-                finished_at: lastProgressRef.current.finished_at,
-                ok: lastProgressRef.current.ok,
-                lines: lastProgressRef.current.lines,
-              }
-            : undefined,
+          progress: progressFromSnap(snap),
           status_timeline: statusLines.slice(-20),
         });
         throw e;
@@ -995,22 +999,16 @@ export function ResearchPipelinePanel({
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Analysis failed";
         const kind: TpPassKind = saved.phase === "video" ? "video" : "carousel";
+        const snap = readLastProgress(lastProgressRef);
         upsertPassReport(kind, {
           at: new Date().toISOString(),
           pass: kind === "video" ? "top_performer_video" : "top_performer_carousel",
           success: false,
           project_slug: slug,
           import_id: saved.importId,
-          progress_id: lastProgressRef.current?.progress_id ?? saved.progressId,
+          progress_id: snap?.progress_id ?? saved.progressId,
           error: msg,
-          progress: lastProgressRef.current
-            ? {
-                started_at: lastProgressRef.current.started_at,
-                finished_at: lastProgressRef.current.finished_at,
-                ok: lastProgressRef.current.ok,
-                lines: lastProgressRef.current.lines,
-              }
-            : undefined,
+          progress: progressFromSnap(snap),
         });
         setError(msg);
         setStep("cutoff");
