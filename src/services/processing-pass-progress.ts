@@ -33,6 +33,12 @@ function pruneExpired(): void {
 
 export function beginProcessingPassProgress(progressId: string, pass: string): void {
   pruneExpired();
+  const existing = store.get(progressId);
+  // Route may begin before the service runs — keep early lines instead of wiping.
+  if (existing && existing.pass === pass && existing.finished_at == null) {
+    existing.expires_at = Date.now() + TTL_MS;
+    return;
+  }
   const now = new Date().toISOString();
   store.set(progressId, {
     pass,

@@ -1211,10 +1211,13 @@ export async function runDeepCarouselInsights(
     rescan?: boolean;
     progress_id?: string;
     disable_rating_percentile_gate?: boolean;
+    async?: boolean;
   }
 ) {
   return corePost<{
     ok: boolean;
+    accepted?: boolean;
+    progress_id?: string;
     qualifying_carousel_rows?: number;
     rows_sent?: number;
     error?: string;
@@ -1232,11 +1235,15 @@ export async function runDeepVideoInsights(
     max_rows?: number;
     rating_top_fraction?: number;
     rescan?: boolean;
+    progress_id?: string;
     disable_rating_percentile_gate?: boolean;
+    async?: boolean;
   }
 ) {
   return corePost<{
     ok: boolean;
+    accepted?: boolean;
+    progress_id?: string;
     qualifying_video_rows?: number;
     rows_sent?: number;
     error?: string;

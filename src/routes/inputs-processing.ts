@@ -50,7 +50,13 @@ import { runDeepImageInsightsForImport } from "../services/inputs-deep-image-ins
 import { runDeepVideoInsightsForImport } from "../services/inputs-deep-video-insights.js";
 import { runDeepCarouselInsightsForImport } from "../services/inputs-deep-carousel-insights.js";
 import { runCarouselDocumentAiOcrForImport } from "../services/inputs-carousel-document-ai-ocr.js";
-import { getProcessingPassProgress } from "../services/processing-pass-progress.js";
+import { randomUUID } from "node:crypto";
+import {
+  appendProcessingPassProgress,
+  beginProcessingPassProgress,
+  finishProcessingPassProgress,
+  getProcessingPassProgress,
+} from "../services/processing-pass-progress.js";
 import { deriveEvidenceDisplayKind } from "../services/inputs-evidence-post-format.js";
 import { postUrlForTopPerformerPreview } from "../services/inputs-top-performer-qualifying-preview.js";
 import { evidenceThumbnailForInsightRow } from "../services/inputs-evidence-thumbnail-preview.js";
@@ -842,20 +848,47 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
         rescan: z.boolean().optional(),
         rating_top_fraction: z.number().min(0.0001).max(0.5).optional(),
         disable_rating_percentile_gate: z.boolean().optional(),
+        progress_id: z.string().min(8).max(80).optional(),
+        async: z.boolean().optional(),
       })
       .safeParse(request.body ?? {});
     if (!params.success || !UUID_RE.test(params.data.import_id) || !body.success) {
       return reply.code(400).send({ ok: false, error: "bad_params" });
     }
+    const runOpts = {
+      max_rows: body.data.max_rows,
+      min_pre_llm_score: body.data.min_pre_llm_score,
+      max_frames: body.data.max_frames,
+      rescan: body.data.rescan,
+      rating_top_fraction: body.data.rating_top_fraction,
+      disable_rating_percentile_gate: body.data.disable_rating_percentile_gate,
+      progress_id: body.data.progress_id,
+    };
+    if (body.data.async) {
+      const progressId = body.data.progress_id?.trim() || randomUUID();
+      beginProcessingPassProgress(progressId, "top_performer_video");
+      appendProcessingPassProgress(progressId, "Accepted — video deep analysis running in background…", "accepted");
+      const log = request.server.log;
+      void runDeepVideoInsightsForImport(db, config, params.data.project_slug, params.data.import_id, {
+        ...runOpts,
+        progress_id: progressId,
+      })
+        .then(() => {
+          log.info({ progress_id: progressId, import_id: params.data.import_id }, "async deep video insights finished");
+        })
+        .catch((err) => {
+          const snap = getProcessingPassProgress(progressId);
+          if (snap && !snap.finished_at) {
+            const msg = err instanceof Error ? err.message : String(err);
+            appendProcessingPassProgress(progressId, `Failed: ${msg}`, "error");
+            finishProcessingPassProgress(progressId, false);
+          }
+          log.error({ err, progress_id: progressId, import_id: params.data.import_id }, "async deep video insights failed");
+        });
+      return reply.code(202).send({ ok: true, accepted: true, progress_id: progressId });
+    }
     try {
-      const result = await runDeepVideoInsightsForImport(db, config, params.data.project_slug, params.data.import_id, {
-        max_rows: body.data.max_rows,
-        min_pre_llm_score: body.data.min_pre_llm_score,
-        max_frames: body.data.max_frames,
-        rescan: body.data.rescan,
-        rating_top_fraction: body.data.rating_top_fraction,
-        disable_rating_percentile_gate: body.data.disable_rating_percentile_gate,
-      });
+      const result = await runDeepVideoInsightsForImport(db, config, params.data.project_slug, params.data.import_id, runOpts);
       return { ok: true, ...result };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -888,21 +921,46 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
         rating_top_fraction: z.number().min(0.0001).max(0.5).optional(),
         disable_rating_percentile_gate: z.boolean().optional(),
         progress_id: z.string().min(8).max(80).optional(),
+        async: z.boolean().optional(),
       })
       .safeParse(request.body ?? {});
     if (!params.success || !UUID_RE.test(params.data.import_id) || !body.success) {
       return reply.code(400).send({ ok: false, error: "bad_params" });
     }
+    const runOpts = {
+      max_rows: body.data.max_rows,
+      min_pre_llm_score: body.data.min_pre_llm_score,
+      max_slides: body.data.max_slides,
+      rescan: body.data.rescan,
+      rating_top_fraction: body.data.rating_top_fraction,
+      disable_rating_percentile_gate: body.data.disable_rating_percentile_gate,
+      progress_id: body.data.progress_id,
+    };
+    if (body.data.async) {
+      const progressId = body.data.progress_id?.trim() || randomUUID();
+      beginProcessingPassProgress(progressId, "top_performer_carousel");
+      appendProcessingPassProgress(progressId, "Accepted — carousel deep analysis running in background…", "accepted");
+      const log = request.server.log;
+      void runDeepCarouselInsightsForImport(db, config, params.data.project_slug, params.data.import_id, {
+        ...runOpts,
+        progress_id: progressId,
+      })
+        .then(() => {
+          log.info({ progress_id: progressId, import_id: params.data.import_id }, "async deep carousel insights finished");
+        })
+        .catch((err) => {
+          const snap = getProcessingPassProgress(progressId);
+          if (snap && !snap.finished_at) {
+            const msg = err instanceof Error ? err.message : String(err);
+            appendProcessingPassProgress(progressId, `Failed: ${msg}`, "error");
+            finishProcessingPassProgress(progressId, false);
+          }
+          log.error({ err, progress_id: progressId, import_id: params.data.import_id }, "async deep carousel insights failed");
+        });
+      return reply.code(202).send({ ok: true, accepted: true, progress_id: progressId });
+    }
     try {
-      const result = await runDeepCarouselInsightsForImport(db, config, params.data.project_slug, params.data.import_id, {
-        max_rows: body.data.max_rows,
-        min_pre_llm_score: body.data.min_pre_llm_score,
-        max_slides: body.data.max_slides,
-        rescan: body.data.rescan,
-        rating_top_fraction: body.data.rating_top_fraction,
-        disable_rating_percentile_gate: body.data.disable_rating_percentile_gate,
-        progress_id: body.data.progress_id,
-      });
+      const result = await runDeepCarouselInsightsForImport(db, config, params.data.project_slug, params.data.import_id, runOpts);
       return { ok: true, ...result };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

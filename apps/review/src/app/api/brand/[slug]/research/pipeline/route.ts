@@ -197,6 +197,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       rating_top_fraction: body.rating_top_fraction ?? 0.05,
       rescan: false,
       progress_id: progressId,
+      async: true,
     }).catch((e) => ({ ok: false as const, message: String(e) }));
     if (!result || !("ok" in result) || !result.ok) {
       const message =
@@ -207,16 +208,19 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     }
     return NextResponse.json({
       ok: true,
-      progress_id: progressId,
-      qualifying: result.qualifying_carousel_rows ?? result.rows_sent,
+      accepted: true,
+      progress_id: result.progress_id ?? progressId,
     });
   }
 
   if (body.action === "run_tp_video") {
+    const progressId = randomUUID();
     const result = await runDeepVideoInsights(slug, importId, {
       max_rows: body.max_rows ?? 16,
       rating_top_fraction: body.rating_top_fraction ?? 0.05,
       rescan: false,
+      progress_id: progressId,
+      async: true,
     }).catch((e) => ({ ok: false as const, message: String(e) }));
     if (!result || !("ok" in result) || !result.ok) {
       const message =
@@ -227,7 +231,8 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     }
     return NextResponse.json({
       ok: true,
-      qualifying: result.qualifying_video_rows ?? result.rows_sent,
+      accepted: true,
+      progress_id: result.progress_id ?? progressId,
     });
   }
 

@@ -33,6 +33,11 @@ import {
 } from "./video-insight-full-analysis.js";
 import { runVideoFramesVisionAnalysis } from "./video-insights-vision.js";
 import { logPipelineEvent } from "./pipeline-logger.js";
+import {
+  appendProcessingPassProgress,
+  beginProcessingPassProgress,
+  finishProcessingPassProgress,
+} from "./processing-pass-progress.js";
 import { evaluatePreLlmRow } from "./inputs-pre-llm-rank.js";
 import { finalizeHttpsImageUrlForOpenAiVision, isVideoLikeEvidence } from "./inputs-image-url-for-analysis.js";
 import { parseVideoAnalysisFrameUrls, parseVideoSourceUrlForArchive } from "./inputs-video-evidence-bundle.js";
@@ -94,6 +99,8 @@ export interface RunDeepVideoInsightsOptions {
   max_frames?: number;
   rating_top_fraction?: number;
   disable_rating_percentile_gate?: boolean;
+  /** Admin / Review UI poll id — live step log via GET /v1/inputs-processing/pass-progress/:progress_id */
+  progress_id?: string;
 }
 
 export interface RunDeepVideoInsightsResult {
@@ -205,6 +212,16 @@ export async function runDeepVideoInsightsForImport(
   importId: string,
   opts: RunDeepVideoInsightsOptions = {}
 ): Promise<RunDeepVideoInsightsResult> {
+  const progressId = opts.progress_id?.trim() || null;
+  const logStep = (message: string, stage?: string) => {
+    if (progressId) appendProcessingPassProgress(progressId, message, stage);
+    logPipelineEvent("info", "other", message, { data: { import_id: importId, step: STEP, pass_stage: stage } });
+  };
+
+  if (progressId) beginProcessingPassProgress(progressId, "top_performer_video");
+
+  let progressOk = false;
+  try {
   if (config.PROCESSING_VISION_PROVIDER === "openai" && !config.OPENAI_API_KEY?.trim()) {
     throw new Error("OPENAI_API_KEY is required for video frame insights");
   }
@@ -225,6 +242,7 @@ export async function runDeepVideoInsightsForImport(
   const criteria = (profile.criteria_json ?? {}) as Record<string, unknown>;
   const model = videoModel(profile);
   const maxRows = videoMaxRows(criteria, opts.max_rows);
+  logStep(`Init · video vision model ${model} · max_rows ${maxRows}`, "init");
   const percentileConfig = resolveTopPerformerPercentileConfig(
     criteria,
     buildTopPerformerRatingGateRequestOverrides(opts),
@@ -708,6 +726,14 @@ export async function runDeepVideoInsightsForImport(
     }
   }
 
+  progressOk = true;
+  logStep(
+    deepVideoZeroWorkSummary
+      ? `Video pass finished with no new insights — ${deepVideoZeroWorkSummary}`
+      : `Video pass finished · analyzed ${analyzed} · insights total ${videoTotal}`,
+    "done"
+  );
+
   return {
     import_id: importId,
     model,
@@ -754,4 +780,11 @@ export async function runDeepVideoInsightsForImport(
     rows_vision_failed: rowsVisionFailed,
     deep_video_zero_work_summary: deepVideoZeroWorkSummary,
   };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    logStep(`Failed: ${msg}`, "error");
+    throw e;
+  } finally {
+    if (progressId) finishProcessingPassProgress(progressId, progressOk);
+  }
 }

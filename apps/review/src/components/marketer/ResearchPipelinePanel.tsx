@@ -101,6 +101,207 @@ function platformSummary(platforms: string[] | undefined): string {
     .join(", ");
 }
 
+type TpResumePhase = "carousel" | "video";
+
+type TpResumeState = {
+  importId: string;
+  phase: TpResumePhase;
+  progressId: string;
+  doCarousel: boolean;
+  doVideo: boolean;
+};
+
+function tpResumeStorageKey(slug: string): string {
+  return `caf-research-tp:${slug}`;
+}
+
+function loadTpResume(slug: string): TpResumeState | null {
+  try {
+    const raw = sessionStorage.getItem(tpResumeStorageKey(slug));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as TpResumeState;
+    if (!parsed?.importId || !parsed?.progressId || !parsed?.phase) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function saveTpResume(slug: string, state: TpResumeState): void {
+  try {
+    sessionStorage.setItem(tpResumeStorageKey(slug), JSON.stringify(state));
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+function clearTpResume(slug: string): void {
+  try {
+    sessionStorage.removeItem(tpResumeStorageKey(slug));
+  } catch {
+    /* ignore */
+  }
+}
+
+type ProgressLine = { at?: string; message: string; stage?: string };
+
+type TpPassKind = "carousel" | "video" | "broad";
+
+/** Admin-style run log for a research pipeline pass (expandable in Review). */
+type TpPassReport = {
+  at: string;
+  pass: "broad_insights" | "top_performer_carousel" | "top_performer_video";
+  success: boolean;
+  project_slug: string;
+  import_id: string | null;
+  progress_id?: string | null;
+  http_status?: number | null;
+  endpoint?: string;
+  request_body?: Record<string, unknown>;
+  response?: unknown;
+  error?: string;
+  progress?: {
+    started_at?: string | null;
+    finished_at?: string | null;
+    ok?: boolean | null;
+    lines: ProgressLine[];
+  };
+  status_timeline?: string[];
+};
+
+type PassReports = Partial<Record<TpPassKind, TpPassReport>>;
+
+function passLabel(kind: TpPassKind): string {
+  if (kind === "broad") return "Broad insights";
+  if (kind === "carousel") return "Carousel deep analysis";
+  return "Video deep analysis";
+}
+
+function ResearchPassDiagnostics({
+  reports,
+  statusLines,
+  progressLog,
+  error,
+  defaultOpen = false,
+}: {
+  reports: PassReports;
+  statusLines: string[];
+  progressLog: string[];
+  error: string | null;
+  defaultOpen?: boolean;
+}) {
+  const entries = (["broad", "carousel", "video"] as const)
+    .map((k) => (reports[k] ? ([k, reports[k]!] as const) : null))
+    .filter((x): x is readonly [TpPassKind, TpPassReport] => x != null);
+
+  if (!error && entries.length === 0 && statusLines.length === 0 && progressLog.length === 0) {
+    return null;
+  }
+
+  const bundle = {
+    caf_review_research_pipeline_log: true,
+    error,
+    status_timeline: statusLines,
+    live_progress_tail: progressLog,
+    runs: {
+      broad: reports.broad ?? null,
+      carousel: reports.carousel ?? null,
+      video: reports.video ?? null,
+    },
+  };
+
+  async function copyAll() {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(bundle, null, 2));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  return (
+    <div className="research-diag" data-agent-id="research-pass-diagnostics">
+      {error && <p className="workspace-error research-diag__error">{error}</p>}
+      <div className="research-diag__toolbar">
+        <span className="research-diag__title">Analysis logs &amp; reports</span>
+        <button type="button" className="btn-ghost btn-sm" onClick={() => void copyAll()}>
+          Copy all JSON
+        </button>
+      </div>
+
+      {(statusLines.length > 0 || progressLog.length > 0) && (
+        <details className="research-diag__details" open={defaultOpen || !!error}>
+          <summary>Status timeline &amp; live progress</summary>
+          <ul className="research-status-log">
+            {statusLines.map((line, i) => (
+              <li key={`st-${i}`}>{line}</li>
+            ))}
+            {progressLog.map((line, i) => (
+              <li key={`pl-${i}`} className="workspace-muted">
+                {line}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+
+      {entries.map(([kind, report]) => (
+        <details
+          key={kind}
+          className="research-diag__details"
+          open={defaultOpen || (!report.success && !!error)}
+        >
+          <summary>
+            {passLabel(kind)}
+            <span
+              className={
+                report.success ? "research-diag__badge research-diag__badge--ok" : "research-diag__badge research-diag__badge--err"
+              }
+            >
+              {report.success ? "ok" : "failed"}
+            </span>
+          </summary>
+          {report.error && <p className="workspace-error" style={{ marginTop: 8 }}>{report.error}</p>}
+          {report.progress_id && (
+            <p className="workspace-muted mono" style={{ fontSize: 12 }}>
+              progress_id: {report.progress_id}
+            </p>
+          )}
+          {report.progress?.lines && report.progress.lines.length > 0 && (
+            <details className="research-diag__nested" open={!report.success}>
+              <summary>Progress log ({report.progress.lines.length} lines)</summary>
+              <ul className="research-status-log research-diag__progress-lines">
+                {report.progress.lines.map((l, i) => (
+                  <li key={`${kind}-line-${i}`}>
+                    {l.at ? (
+                      <span className="research-diag__ts">{l.at.slice(11, 19)} </span>
+                    ) : null}
+                    {l.stage ? <span className="research-diag__stage">[{l.stage}] </span> : null}
+                    {l.message}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+          <details className="research-diag__nested">
+            <summary>Full report JSON (admin-style)</summary>
+            <pre className="research-diag__pre">{JSON.stringify(report, null, 2)}</pre>
+            <button
+              type="button"
+              className="btn-ghost btn-sm"
+              style={{ marginTop: 6 }}
+              onClick={() =>
+                void navigator.clipboard.writeText(JSON.stringify(report, null, 2)).catch(() => {})
+              }
+            >
+              Copy this pass
+            </button>
+          </details>
+        </details>
+      ))}
+    </div>
+  );
+}
+
 export function ResearchPipelinePanel({
   slug,
   defaultImportId,
@@ -154,12 +355,26 @@ export function ResearchPipelinePanel({
   const [doCarousel, setDoCarousel] = useState(true);
   const [doVideo, setDoVideo] = useState(true);
   const [progressLog, setProgressLog] = useState<string[]>([]);
+  const [passReports, setPassReports] = useState<PassReports>({});
   const previewTimers = useRef<Record<string, number>>({});
   const evidenceFileRef = useRef<HTMLInputElement>(null);
   const [profile, setProfile] = useState<ProfileSummary | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [builtPackId, setBuiltPackId] = useState<string | null>(null);
   const [evidenceUploading, setEvidenceUploading] = useState(false);
+  const resumeAttempted = useRef(false);
+  const pollAbortRef = useRef(false);
+  const lastProgressRef = useRef<{
+    progress_id: string;
+    started_at?: string | null;
+    finished_at?: string | null;
+    ok?: boolean | null;
+    lines: ProgressLine[];
+  } | null>(null);
+
+  function upsertPassReport(kind: TpPassKind, entry: TpPassReport) {
+    setPassReports((prev) => ({ ...prev, [kind]: entry }));
+  }
 
   // Pick default completed run whenever options change.
   useEffect(() => {
@@ -208,7 +423,8 @@ export function ResearchPipelinePanel({
       setLoadingKinds(true);
       setError(null);
       setKinds([]);
-      setStep("cutoff");
+      const resuming = loadTpResume(slug)?.importId === id;
+      if (!resuming) setStep("cutoff");
       try {
         const res = await fetch(
           `/api/brand/${encodeURIComponent(slug)}/research/pipeline?importId=${encodeURIComponent(id)}&action=stats`
@@ -370,76 +586,189 @@ export function ResearchPipelinePanel({
   function selectRun(runId: string) {
     const run = selectableRuns.find((r) => r.id === runId);
     if (!run?.evidence_import_id) return;
+    if (run.evidence_import_id !== importId) clearTpResume(slug);
     setSelectedRunId(runId);
     setImportId(run.evidence_import_id);
     setStep("cutoff");
     setStatusLines([]);
     setProgressLog([]);
+    setPassReports({});
     setError(null);
   }
 
   async function runTopPerformersAfterInsights(activeImportId: string) {
     if (!doCarousel && !doVideo) {
       pushStatus("Skipped top-performer deep analysis (carousel and video both off).");
+      clearTpResume(slug);
       return;
     }
     setStep("top_performers");
     setProgressLog([]);
+    lastProgressRef.current = null;
     pushStatus(
-      "Insights ready — starting top-performer deep analysis. We’ll show progress as carousels and videos are inspected."
+      "Insights ready — starting top-performer deep analysis. Running in the background on CAF — safe to leave this tab open; progress updates below."
     );
     if (doCarousel) {
       const carouselPct = clampTopPct(tpCarouselTopPct);
+      const requestBody = {
+        action: "run_tp_carousel",
+        importId: activeImportId,
+        max_rows: tpCarouselMax,
+        rating_top_fraction: topFractionFromPct(carouselPct),
+      };
+      const endpoint = `/api/brand/${encodeURIComponent(slug)}/research/pipeline`;
       pushStatus(
         `Starting carousel deep analysis (top ${carouselPct}%, up to ${tpCarouselMax})…`
       );
-      const res = await fetch(`/api/brand/${encodeURIComponent(slug)}/research/pipeline`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "run_tp_carousel",
+      let httpStatus: number | null = null;
+      let responseJson: unknown = null;
+      try {
+        const res = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(requestBody),
+        });
+        httpStatus = res.status;
+        const j = (await res.json()) as {
+          ok?: boolean;
+          message?: string;
+          progress_id?: string;
+          accepted?: boolean;
+        };
+        responseJson = j;
+        if (!res.ok || !j.ok || !j.progress_id) {
+          throw new Error(j.message ?? "Carousel analysis failed to start");
+        }
+        saveTpResume(slug, {
           importId: activeImportId,
-          max_rows: tpCarouselMax,
-          rating_top_fraction: topFractionFromPct(carouselPct),
-        }),
-      });
-      const j = (await res.json()) as {
-        ok?: boolean;
-        message?: string;
-        progress_id?: string;
-        qualifying?: number;
-      };
-      if (!res.ok || !j.ok) throw new Error(j.message ?? "Carousel analysis failed");
-      if (j.progress_id) {
-        await pollProgress(j.progress_id);
+          phase: "carousel",
+          progressId: j.progress_id,
+          doCarousel,
+          doVideo,
+        });
+        const progress = await pollProgress(j.progress_id);
+        upsertPassReport("carousel", {
+          at: new Date().toISOString(),
+          pass: "top_performer_carousel",
+          success: true,
+          project_slug: slug,
+          import_id: activeImportId,
+          progress_id: j.progress_id,
+          http_status: httpStatus,
+          endpoint,
+          request_body: requestBody,
+          response: j,
+          progress,
+          status_timeline: statusLines.slice(-20),
+        });
+        pushStatus("Carousel analysis done.");
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        upsertPassReport("carousel", {
+          at: new Date().toISOString(),
+          pass: "top_performer_carousel",
+          success: false,
+          project_slug: slug,
+          import_id: activeImportId,
+          progress_id: lastProgressRef.current?.progress_id ?? null,
+          http_status: httpStatus,
+          endpoint,
+          request_body: requestBody,
+          response: responseJson,
+          error: msg,
+          progress: lastProgressRef.current
+            ? {
+                started_at: lastProgressRef.current.started_at,
+                finished_at: lastProgressRef.current.finished_at,
+                ok: lastProgressRef.current.ok,
+                lines: lastProgressRef.current.lines,
+              }
+            : undefined,
+          status_timeline: statusLines.slice(-20),
+        });
+        throw e;
       }
-      pushStatus(
-        j.qualifying != null
-          ? `Carousel analysis done (${j.qualifying} qualifying).`
-          : "Carousel analysis done."
-      );
     }
     if (doVideo) {
       const videoPct = clampTopPct(tpVideoTopPct);
+      const requestBody = {
+        action: "run_tp_video",
+        importId: activeImportId,
+        max_rows: tpVideoMax,
+        rating_top_fraction: topFractionFromPct(videoPct),
+      };
+      const endpoint = `/api/brand/${encodeURIComponent(slug)}/research/pipeline`;
       pushStatus(`Starting video deep analysis (top ${videoPct}%, up to ${tpVideoMax})…`);
-      const res = await fetch(`/api/brand/${encodeURIComponent(slug)}/research/pipeline`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "run_tp_video",
+      let httpStatus: number | null = null;
+      let responseJson: unknown = null;
+      try {
+        const res = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(requestBody),
+        });
+        httpStatus = res.status;
+        const j = (await res.json()) as {
+          ok?: boolean;
+          message?: string;
+          progress_id?: string;
+          accepted?: boolean;
+        };
+        responseJson = j;
+        if (!res.ok || !j.ok || !j.progress_id) {
+          throw new Error(j.message ?? "Video analysis failed to start");
+        }
+        saveTpResume(slug, {
           importId: activeImportId,
-          max_rows: tpVideoMax,
-          rating_top_fraction: topFractionFromPct(videoPct),
-        }),
-      });
-      const j = (await res.json()) as { ok?: boolean; message?: string; qualifying?: number };
-      if (!res.ok || !j.ok) throw new Error(j.message ?? "Video analysis failed");
-      pushStatus(
-        j.qualifying != null
-          ? `Video analysis done (${j.qualifying} qualifying).`
-          : "Video analysis done."
-      );
+          phase: "video",
+          progressId: j.progress_id,
+          doCarousel,
+          doVideo,
+        });
+        const progress = await pollProgress(j.progress_id);
+        upsertPassReport("video", {
+          at: new Date().toISOString(),
+          pass: "top_performer_video",
+          success: true,
+          project_slug: slug,
+          import_id: activeImportId,
+          progress_id: j.progress_id,
+          http_status: httpStatus,
+          endpoint,
+          request_body: requestBody,
+          response: j,
+          progress,
+          status_timeline: statusLines.slice(-20),
+        });
+        pushStatus("Video analysis done.");
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        upsertPassReport("video", {
+          at: new Date().toISOString(),
+          pass: "top_performer_video",
+          success: false,
+          project_slug: slug,
+          import_id: activeImportId,
+          progress_id: lastProgressRef.current?.progress_id ?? null,
+          http_status: httpStatus,
+          endpoint,
+          request_body: requestBody,
+          response: responseJson,
+          error: msg,
+          progress: lastProgressRef.current
+            ? {
+                started_at: lastProgressRef.current.started_at,
+                finished_at: lastProgressRef.current.finished_at,
+                ok: lastProgressRef.current.ok,
+                lines: lastProgressRef.current.lines,
+              }
+            : undefined,
+          status_timeline: statusLines.slice(-20),
+        });
+        throw e;
+      }
     }
+    clearTpResume(slug);
   }
 
   async function startAnalysis() {
@@ -449,6 +778,9 @@ export function ResearchPipelinePanel({
     setStep("analyzing");
     setStatusLines([]);
     setProgressLog([]);
+    setPassReports({});
+    lastProgressRef.current = null;
+    clearTpResume(slug);
     pushStatus("Saving your evidence cutoffs…");
     try {
       for (const k of kinds) {
@@ -475,17 +807,36 @@ export function ResearchPipelinePanel({
       pushStatus(
         `Analyzing ~${poolForAnalysis} posts across ${kinds.length} platform(s). After insights, CAF will run deep analysis (${tpPlan}). This can take several minutes.`
       );
+      const broadBody = {
+        action: "run_broad_all",
+        importId,
+        max_rows: maxRows,
+        cutoffs: Object.fromEntries(kinds.map((k) => [k.evidence_kind, k.minScore])),
+      };
       const res = await fetch(`/api/brand/${encodeURIComponent(slug)}/research/pipeline`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "run_broad_all",
-          importId,
-          max_rows: maxRows,
-          cutoffs: Object.fromEntries(kinds.map((k) => [k.evidence_kind, k.minScore])),
-        }),
+        body: JSON.stringify(broadBody),
       });
-      const j = (await res.json()) as { ok?: boolean; message?: string; summary?: string };
+      const j = (await res.json()) as {
+        ok?: boolean;
+        message?: string;
+        summary?: string;
+        total_sent?: number;
+      };
+      upsertPassReport("broad", {
+        at: new Date().toISOString(),
+        pass: "broad_insights",
+        success: !!(res.ok && j.ok),
+        project_slug: slug,
+        import_id: importId,
+        http_status: res.status,
+        endpoint: `/api/brand/${encodeURIComponent(slug)}/research/pipeline`,
+        request_body: broadBody,
+        response: j,
+        error: res.ok && j.ok ? undefined : j.message ?? "Analysis failed",
+        status_timeline: [],
+      });
       if (!res.ok || !j.ok) throw new Error(j.message ?? "Analysis failed");
       pushStatus(j.summary ?? "Broad analysis finished.");
       await runTopPerformersAfterInsights(importId);
@@ -496,14 +847,21 @@ export function ResearchPipelinePanel({
     } catch (e) {
       setError(e instanceof Error ? e.message : "Analysis failed");
       setStep("cutoff");
+      clearTpResume(slug);
     } finally {
       setBusy(false);
     }
   }
 
-  async function pollProgress(progressId: string) {
+  async function pollProgress(progressId: string): Promise<{
+    started_at?: string | null;
+    finished_at: string | null;
+    ok: boolean | null;
+    lines: ProgressLine[];
+  }> {
     const started = Date.now();
-    while (Date.now() - started < 15 * 60_000) {
+    while (Date.now() - started < 60 * 60_000) {
+      if (pollAbortRef.current) throw new Error("Progress polling cancelled");
       await new Promise((r) => setTimeout(r, 2000));
       const res = await fetch(
         `/api/brand/${encodeURIComponent(slug)}/research/pipeline?action=pass_progress&progressId=${encodeURIComponent(progressId)}`
@@ -511,15 +869,158 @@ export function ResearchPipelinePanel({
       if (!res.ok) continue;
       const j = (await res.json()) as {
         ok?: boolean;
-        progress?: { finished_at: string | null; lines?: Array<{ message: string }> };
+        progress?: {
+          started_at?: string;
+          finished_at: string | null;
+          ok: boolean | null;
+          lines?: ProgressLine[];
+        };
       };
       const lines = j.progress?.lines ?? [];
+      lastProgressRef.current = {
+        progress_id: progressId,
+        started_at: j.progress?.started_at ?? null,
+        finished_at: j.progress?.finished_at ?? null,
+        ok: j.progress?.ok ?? null,
+        lines,
+      };
       if (lines.length) {
-        setProgressLog(lines.slice(-8).map((l) => l.message));
+        setProgressLog(lines.slice(-12).map((l) => l.message));
       }
-      if (j.progress?.finished_at) break;
+      if (j.progress?.finished_at) {
+        if (j.progress.ok === false) {
+          const last = lines.length ? lines[lines.length - 1]?.message : null;
+          throw new Error(last || "Top-performer analysis failed");
+        }
+        return {
+          started_at: j.progress.started_at ?? null,
+          finished_at: j.progress.finished_at,
+          ok: j.progress.ok,
+          lines,
+        };
+      }
     }
+    throw new Error("Top-performer analysis timed out while waiting for progress");
   }
+
+  useEffect(() => {
+    if (!importId || resumeAttempted.current) return;
+    const saved = loadTpResume(slug);
+    if (!saved || saved.importId !== importId) return;
+    resumeAttempted.current = true;
+    pollAbortRef.current = false;
+
+    void (async () => {
+      setBusy(true);
+      setError(null);
+      setStep("top_performers");
+      setDoCarousel(saved.doCarousel);
+      setDoVideo(saved.doVideo);
+      setStatusLines([]);
+      setProgressLog([]);
+      pushStatus(
+        "Resuming top-performer analysis already running on CAF — progress updates below. Safe to leave this tab open."
+      );
+      try {
+        const checkRes = await fetch(
+          `/api/brand/${encodeURIComponent(slug)}/research/pipeline?action=pass_progress&progressId=${encodeURIComponent(saved.progressId)}`
+        );
+        if (!checkRes.ok) {
+          clearTpResume(slug);
+          setStep("cutoff");
+          pushStatus(
+            "Previous background job is no longer available (Core may have restarted). Start research analysis again if needed."
+          );
+          return;
+        }
+        const checkJson = (await checkRes.json()) as {
+          progress?: {
+            finished_at: string | null;
+            ok: boolean | null;
+            lines?: Array<{ message: string }>;
+          };
+        };
+        const lines = checkJson.progress?.lines ?? [];
+        if (lines.length) setProgressLog(lines.slice(-8).map((l) => l.message));
+
+        if (!checkJson.progress?.finished_at) {
+          await pollProgress(saved.progressId);
+        } else if (checkJson.progress.ok === false) {
+          const last = lines.length ? lines[lines.length - 1]?.message : null;
+          throw new Error(last || "Top-performer analysis failed");
+        }
+
+        if (saved.phase === "carousel") {
+          pushStatus("Carousel analysis done.");
+          if (saved.doVideo) {
+            const videoPct = clampTopPct(tpVideoTopPct);
+            pushStatus(`Starting video deep analysis (top ${videoPct}%, up to ${tpVideoMax})…`);
+            const res = await fetch(`/api/brand/${encodeURIComponent(slug)}/research/pipeline`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                action: "run_tp_video",
+                importId: saved.importId,
+                max_rows: tpVideoMax,
+                rating_top_fraction: topFractionFromPct(videoPct),
+              }),
+            });
+            const j = (await res.json()) as {
+              ok?: boolean;
+              message?: string;
+              progress_id?: string;
+            };
+            if (!res.ok || !j.ok || !j.progress_id) {
+              throw new Error(j.message ?? "Video analysis failed to start");
+            }
+            saveTpResume(slug, {
+              importId: saved.importId,
+              phase: "video",
+              progressId: j.progress_id,
+              doCarousel: saved.doCarousel,
+              doVideo: saved.doVideo,
+            });
+            await pollProgress(j.progress_id);
+            pushStatus("Video analysis done.");
+          }
+        } else {
+          pushStatus("Video analysis done.");
+        }
+
+        clearTpResume(slug);
+        setStep("done");
+        pushStatus(
+          "Research brief foundation is ready. Create a research brief below, or open Intelligence to explore patterns."
+        );
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Analysis failed";
+        const kind: TpPassKind = saved.phase === "video" ? "video" : "carousel";
+        upsertPassReport(kind, {
+          at: new Date().toISOString(),
+          pass: kind === "video" ? "top_performer_video" : "top_performer_carousel",
+          success: false,
+          project_slug: slug,
+          import_id: saved.importId,
+          progress_id: lastProgressRef.current?.progress_id ?? saved.progressId,
+          error: msg,
+          progress: lastProgressRef.current
+            ? {
+                started_at: lastProgressRef.current.started_at,
+                finished_at: lastProgressRef.current.finished_at,
+                ok: lastProgressRef.current.ok,
+                lines: lastProgressRef.current.lines,
+              }
+            : undefined,
+        });
+        setError(msg);
+        setStep("cutoff");
+        clearTpResume(slug);
+      } finally {
+        setBusy(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot resume when importId first matches saved progress
+  }, [importId, slug]);
 
   async function createResearchBrief() {
     if (!importId) return;
@@ -670,7 +1171,9 @@ export function ResearchPipelinePanel({
         Pick a completed scrape run, tune cutoffs and top-performer thresholds, then start analysis. One click runs
         insights first, then deep carousel/video analysis with the thresholds you set.
       </p>
-      {error && <p className="workspace-error">{error}</p>}
+      {error && Object.keys(passReports).length === 0 && (
+        <p className="workspace-error">{error}</p>
+      )}
 
       {(step === "cutoff" || step === "analyzing") && (
         <div className="research-pipeline-step">
@@ -916,20 +1419,36 @@ export function ResearchPipelinePanel({
           <p className="research-lead">
             {step === "analyzing"
               ? "CAF is reading captions and engagement signals platform by platform. When insights finish, the top-performer pass starts automatically with the thresholds you set."
-              : "CAF is inspecting winning carousels and videos so mimic and visual routes have strong references. You don’t need to watch the screen."}
+              : "Deep analysis runs in the background on CAF. Keep this tab open for live progress, or leave and come back — we will resume polling if the job is still running."}
           </p>
           <ul className="research-status-log">
-            {statusLines.map((line, i) => (
+            {statusLines.slice(-6).map((line, i) => (
               <li key={`${i}-${line.slice(0, 24)}`}>{line}</li>
             ))}
-            {progressLog.map((line, i) => (
+            {progressLog.slice(-6).map((line, i) => (
               <li key={`p-${i}`} className="workspace-muted">
                 {line}
               </li>
             ))}
           </ul>
+          <ResearchPassDiagnostics
+            reports={passReports}
+            statusLines={statusLines}
+            progressLog={progressLog}
+            error={null}
+          />
           <div className="research-pulse" aria-hidden />
         </div>
+      )}
+
+      {step === "cutoff" && (error || Object.keys(passReports).length > 0) && (
+        <ResearchPassDiagnostics
+          reports={passReports}
+          statusLines={statusLines}
+          progressLog={progressLog}
+          error={error}
+          defaultOpen
+        />
       )}
 
       {step === "done" && (
@@ -940,6 +1459,12 @@ export function ResearchPipelinePanel({
             Intelligence — not here.
           </p>
           {error && <p className="workspace-error">{error}</p>}
+          <ResearchPassDiagnostics
+            reports={passReports}
+            statusLines={statusLines}
+            progressLog={progressLog}
+            error={null}
+          />
           <div className="research-profile-confirm">
             <p className="research-profile-confirm__title">Processing profile</p>
             {profileLoading && !profile ? (
@@ -980,18 +1505,6 @@ export function ResearchPipelinePanel({
                 </Link>
               </div>
             </div>
-          )}
-          {(statusLines.length > 0 || progressLog.length > 0) && (
-            <ul className="research-status-log" style={{ marginTop: 12 }}>
-              {statusLines.map((line, i) => (
-                <li key={`done-s-${i}`}>{line}</li>
-              ))}
-              {progressLog.map((line, i) => (
-                <li key={`done-p-${i}`} className="workspace-muted">
-                  {line}
-                </li>
-              ))}
-            </ul>
           )}
           {busy && <div className="research-pulse" aria-hidden />}
         </div>
